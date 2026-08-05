@@ -1,0 +1,20 @@
+- name: Run poster script
+        env:
+          BUFFER_ACCESS_TOKEN: ${{ secrets.BUFFER_ACCESS_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python generate_and_send.py
+
+      - name: Commit and push generated slides and updated CSV
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add posts.csv public_slides/
+          if git diff --staged --quiet; then
+            echo "No hi ha canvis per commitejar."
+          else
+            git commit -m "auto: update slides and mark post as done"
+            git push
+          fi
