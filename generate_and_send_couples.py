@@ -7,8 +7,8 @@ import requests
 import ftplib
 import subprocess
 import html
-from huggingface_hub import InferenceClient
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+from huggingface_hub import InferenceClient
 
 # ========================================================
 # CONFIGURACIÓ I RUTES
@@ -39,16 +39,20 @@ FTP_HOST = os.getenv("FTP_HOST")
 FTP_USER = os.getenv("FTP_USER")
 FTP_PASS = os.getenv("FTP_PASS")
 
-# Model de Hugging Face
-HF_MODEL_URL = "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell"
+# Models compatibles amb Hugging Face InferenceClient
+HF_MODELS = [
+    "black-forest-labs/FLUX.1-dev",
+    "stabilityai/stable-diffusion-xl-base-1.0",
+    "stabilityai/stable-diffusion-2-1"
+]
 
-# Prompts per generar imatges retro de parelles/romàntiques sense persones
+# Prompts estrictament SENSE PERSONES (Només paisatges i espais)
 PROMPT_POOL = [
-    "cinematic retro 35mm film photograph, cozy romantic sunset view over quiet beach, vintage warm tones, subtle film grain, soft focus, minimal aesthetic, no people",
-    "analog 35mm film photo, cozy aesthetic coffee shop window on a rainy day, warm dim lighting, retro vintage color palette, soft glow, no people",
-    "vintage 35mm photograph, romantic european cobblestone street at dusk, golden hour lighting, analog film grain, dreamlike atmosphere, no people",
-    "cozy aesthetic balcony with fairy lights over scenic city skyline at twilight, 35mm film texture, warm muted colors, retro aesthetic, no people",
-    "retro Kodachrome photograph, serene mountain lake view during golden hour sunrise, warm vintage glow, soft focus, minimal background, no people"
+    "completely empty scenic landscape, quiet sunset over calm ocean, vintage 35mm film photograph, warm golden hour, soft film grain, deserted, no humans, no people, no silhouettes",
+    "empty cozy balcony overlooking a serene lake at twilight, warm dim fairy lights, retro 35mm analog photo, vintage muted tones, no people, no humans",
+    "peaceful autumn forest landscape with soft sunlight through trees, vintage Kodachrome photograph, warm retro colors, empty nature view, no people",
+    "deserted cobblestone alley in a European village at dusk, architecture only, warm street lamps glow, 35mm analog film texture, completely empty, no people, no silhouettes",
+    "serene mountain reflection on a quiet lake at sunrise, retro 35mm aesthetic, soft warm glow, untouched nature landscape, empty scenery, no humans"
 ]
 
 def download_file(url, save_path):
@@ -58,48 +62,50 @@ def download_file(url, save_path):
         with open(save_path, 'wb') as f:
             f.write(res.content)
 
-# Llista de models compatibles amb la nova API de Hugging Face
-HF_MODELS = [
-    "black-forest-labs/FLUX.1-dev",
-    "stabilityai/stable-diffusion-xl-base-1.0",
-    "stabilityai/stable-diffusion-2-1"
-]
-
 def generate_hf_background():
     """Genera una imatge fons estil retro 35mm utilitzant Hugging Face InferenceClient"""
     prompt = random.choice(PROMPT_POOL)
     
     if HF_TOKEN:
         try:
-            print("🎨 Generant imatge retro via Hugging Face InferenceClient...")
-            # provider="auto" tria automàticament el servidor actiu i gratuït més ràpid
+            print("🎨 Generant nova imatge de paisatge via Hugging Face...")
             client = InferenceClient(api_key=HF_TOKEN, provider="auto")
             
             for model_id in HF_MODELS:
                 try:
                     img = client.text_to_image(prompt=prompt, model=model_id)
                     img = img.convert('RGB').resize((1080, 1080), Image.Resampling.LANCZOS)
-                    print(f"✅ Imatge generada amb èxit usant el model: {model_id}")
+                    print(f"✅ Imatge generada amb el model: {model_id}")
                     return img
                 except Exception as err_m:
                     print(f"⚠️ Model {model_id} no disponible ({err_m}). Intentant el següent...")
         except Exception as e:
             print(f"⚠️ Error del client HF: {e}")
 
-    # Fallback: Fons blau retro si l'API no està disponible
+    # Fallback: Fons blau retro si l'API falla
     print("🎨 Usant fons de reserva blau retro...")
     bg = Image.new('RGB', (1080, 1080), color='#2B4380')
     return bg
 
-    # Fallback: Fons degradat blau retro si l'API falla
-    bg = Image.new('RGB', (1080, 1080), color='#2B4380')
-    return bg
+def apply_retro_filters_and_frame(bg_img):
+    """Aplica filtre retro càlid, baixada de contrast, foscor i el marc arrodonit"""
+    # 1. Reduir contrast per a un efecte desteñit/vell
+    contrast_enhancer = ImageEnhance.Contrast(bg_img)
+    img_fade = contrast_enhancer.enhance(0.85)
 
-def apply_retro_frame_and_overlay(bg_img):
-    """Aplica el marc exterior fosca estil TV/Càmera retro i redueix brillantor"""
-    enhancer = ImageEnhance.Brightness(bg_img)
-    dark_bg = enhancer.enhance(0.55)  # Baixar brillantor al 55%
+    # 2. Aplicar to càlid/sepia utilitzant la matriu de transformació de color
+    warm_matrix = (
+        1.2, 0.2, -0.1, 0,
+        0.1, 1.1, -0.1, 0,
+        0.1, 0.1,  0.8, 0
+    )
+    img_warm = img_fade.convert('RGB', warm_matrix)
 
+    # 3. Fosc per garantir la llegibilitat del text blanc (50% de brillantor)
+    brightness_enhancer = ImageEnhance.Brightness(img_warm)
+    dark_bg = brightness_enhancer.enhance(0.50)
+
+    # 4. Marc exterior fosc amb cantonades arrodonides
     width, height = 1080, 1080
     frame = Image.new('RGBA', (width, height), (10, 12, 18, 255))
     
@@ -116,6 +122,7 @@ def apply_retro_frame_and_overlay(bg_img):
     dark_bg_rgba = dark_bg.convert('RGBA')
     final_canvas = Image.composite(dark_bg_rgba, frame, mask)
     
+    # Vignette interior suau
     overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw_overlay = ImageDraw.Draw(overlay)
     draw_overlay.rounded_rectangle(
@@ -298,7 +305,7 @@ def main():
         print(f"❌ Error: Fitxer CSV no trobat a {CSV_PATH}")
         return
 
-    # --- LECTURA SEGURA DEL CSV ---
+    # LECTURA SEGURA DEL CSV
     rows, headers = [], []
     with open(CSV_PATH, mode='r', encoding='utf-8') as f:
         reader = csv.reader(f)
@@ -309,7 +316,6 @@ def main():
             return
             
         for r in reader:
-            # Filtra línies totalment buides o salts de línia
             if r and any(field.strip() for field in r):
                 rows.append(r)
 
@@ -321,7 +327,6 @@ def main():
     current_idx, post_data = None, None
     
     for idx, r in enumerate(rows):
-        # Assegura que la fila tingui la mateixa quantitat de columnes que la capçalera
         while len(r) < len(headers):
             r.append('')
             
@@ -344,31 +349,29 @@ def main():
     font_serif_italic = ImageFont.truetype(FONT_SERIF_ITALIC_PATH, 44)
     font_sans_footer = ImageFont.truetype(FONT_SANS_PATH, 28)
 
-    # Imatge de fons base per a tot el carrousel
-    base_bg = generate_hf_background()
-    framed_bg = apply_retro_frame_and_overlay(base_bg)
-
     temp_files = []
 
-    # --- SLIDE 1: PORTADA ---
-    s1 = framed_bg.copy()
-    d1 = ImageDraw.Draw(s1)
-    draw_title_with_underline(d1, post_data.get('Slide_1_Title', ''), post_data.get('Highlight_Word', ''), font_serif_large, 1080, None)
-    draw_footer(d1, font_sans_footer, 1080)
-    
-    f1_path = os.path.join(SLIDES_DIR, f"{post_id}_slide_1.jpg")
-    s1.save(f1_path, "JPEG", quality=95)
-    temp_files.append(f1_path)
+    # --- GENERACIÓ DE LES 6 DIAPOSITIVES AMB FONTS INDEPENDENTS ---
+    slide_keys = [
+        'Slide_1_Title',
+        'Slide_2_Question_or_Title',
+        'Slide_3_Question',
+        'Slide_4_Question',
+        'Slide_5_Question',
+        'Slide_6_Question'
+    ]
 
-    # --- SLIDES 2 A 6 (6 SLIDES EN TOTAL) ---
-    slide_keys = ['Slide_2_Question_or_Title', 'Slide_3_Question', 'Slide_4_Question', 'Slide_5_Question', 'Slide_6_Question']
-    
     for i, key in enumerate(slide_keys):
-        s = framed_bg.copy()
+        print(f"🖼️ Generant fons retro per a la Slide {i+1}/6...")
+        base_bg = generate_hf_background()
+        s = apply_retro_filters_and_frame(base_bg)
         d = ImageDraw.Draw(s)
         
-        # Diapositiva tipus TEST (A, B, C, D) a la Slide 2 si és Type = Test
-        if i == 0 and post_type.lower() == 'test':
+        if i == 0:
+            # --- SLIDE 1: PORTADA ---
+            draw_title_with_underline(d, post_data.get('Slide_1_Title', ''), post_data.get('Highlight_Word', ''), font_serif_large, 1080, None)
+        elif i == 1 and post_type.lower() == 'test':
+            # --- SLIDE 2: TEST (Opcions A, B, C, D) ---
             q_text = post_data.get('Slide_2_Question_or_Title', '')
             options = [
                 ('A) ', post_data.get('Option_A', '')),
@@ -391,6 +394,7 @@ def main():
                 d.text((160, y_curr), opt_text, fill='#FFFFFF', font=font_serif_med)
                 y_curr += 65
         else:
+            # --- SLIDES 2 A 6: PREGUNTES ESTÀNDARD ---
             q_text = post_data.get(key, '')
             lines = wrap_text(q_text, d, font_serif_med, 880)
             line_heights = [d.textbbox((0, 0), l, font=font_serif_med)[3] - d.textbbox((0, 0), l, font=font_serif_med)[1] for l in lines]
@@ -404,7 +408,7 @@ def main():
                 
         draw_footer(d, font_sans_footer, 1080)
         
-        f_path = os.path.join(SLIDES_DIR, f"{post_id}_slide_{i+2}.jpg")
+        f_path = os.path.join(SLIDES_DIR, f"{post_id}_slide_{i+1}.jpg")
         s.save(f_path, "JPEG", quality=95)
         temp_files.append(f_path)
 
