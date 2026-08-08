@@ -7,6 +7,7 @@ import requests
 import ftplib
 import subprocess
 import html
+from huggingface_hub import InferenceClient
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
 # ========================================================
@@ -57,29 +58,38 @@ def download_file(url, save_path):
         with open(save_path, 'wb') as f:
             f.write(res.content)
 
+# Llista de models compatibles amb la nova API de Hugging Face
+HF_MODELS = [
+    "black-forest-labs/FLUX.1-dev",
+    "stabilityai/stable-diffusion-xl-base-1.0",
+    "stabilityai/stable-diffusion-2-1"
+]
+
 def generate_hf_background():
-    """Genera una imatge fons estil retro 35mm utilitzant Hugging Face API"""
+    """Genera una imatge fons estil retro 35mm utilitzant Hugging Face InferenceClient"""
     prompt = random.choice(PROMPT_POOL)
-    headers = {}
+    
     if HF_TOKEN:
-        headers["Authorization"] = f"Bearer {HF_TOKEN}"
-    
-    payload = {
-        "inputs": prompt,
-        "parameters": {"width": 1080, "height": 1080}
-    }
-    
-    try:
-        print("🎨 Generant imatge retro via Hugging Face FLUX.1-schnell...")
-        response = requests.post(HF_MODEL_URL, headers=headers, json=payload, timeout=45)
-        if response.status_code == 200:
-            img = Image.open(io.BytesIO(response.content)).convert('RGB')
-            img = img.resize((1080, 1080), Image.Resampling.LANCZOS)
-            return img
-        else:
-            print(f"⚠️ Error HF API ({response.status_code}): {response.text}")
-    except Exception as e:
-        print(f"⚠️ Error generant imatge HF: {e}")
+        try:
+            print("🎨 Generant imatge retro via Hugging Face InferenceClient...")
+            # provider="auto" tria automàticament el servidor actiu i gratuït més ràpid
+            client = InferenceClient(api_key=HF_TOKEN, provider="auto")
+            
+            for model_id in HF_MODELS:
+                try:
+                    img = client.text_to_image(prompt=prompt, model=model_id)
+                    img = img.convert('RGB').resize((1080, 1080), Image.Resampling.LANCZOS)
+                    print(f"✅ Imatge generada amb èxit usant el model: {model_id}")
+                    return img
+                except Exception as err_m:
+                    print(f"⚠️ Model {model_id} no disponible ({err_m}). Intentant el següent...")
+        except Exception as e:
+            print(f"⚠️ Error del client HF: {e}")
+
+    # Fallback: Fons blau retro si l'API no està disponible
+    print("🎨 Usant fons de reserva blau retro...")
+    bg = Image.new('RGB', (1080, 1080), color='#2B4380')
+    return bg
 
     # Fallback: Fons degradat blau retro si l'API falla
     bg = Image.new('RGB', (1080, 1080), color='#2B4380')
