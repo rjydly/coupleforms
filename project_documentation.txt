@@ -1,0 +1,74 @@
+===============================================================================
+               ESPECIFICACIÓ TÈCNICA I DOCUMENTACIÓ DEL PROJECTE
+                  CoupleForms / FormFriends Couples Bot
+===============================================================================
+Data d'actualització: Agost 2026
+Versió de l'Script: 3.5 (Unsplash High-Res API + Custom Retro 35mm Color Matrix + Test/Question Layout Engine + Telegram Album Integration)
+Estat del Sistema: Producció / Actiu
+Repositori Target: https://github.com/[user]/coupleforms
+
+-------------------------------------------------------------------------------
+1. PROPÒSIT DEL PROJECTE I ARQUITECTURA GENERAL
+-------------------------------------------------------------------------------
+CoupleForms és una canalització d'automatització d'extrem a extrem (End-to-End Content Pipeline) desenvolupada en Python 3.10 i integrada amb GitHub Actions. 
+
+El seu objectiu és la generació automàtica de carrousels gràfics de 6 diapositives d'alta qualitat visuals (estil 35mm retro / fotografia analògica) enfocats al nínxol de parelles ("Couples"), amb la finalitat de publicar-los automàticament a Instagram i TikTok via Buffer GraphQL API i dirigir el tràfic cap a la plataforma web `formfriends.com`.
+
+-------------------------------------------------------------------------------
+2. ESTRUCTURA DE FITXERS I DIRECTORIS
+-------------------------------------------------------------------------------
+/ (Arrel del Repositori)
+├── .github/
+│   └── workflows/
+│       └── couples_workflow.yml    # Workflow de CI/CD per a GitHub Actions (Cron + Manual)
+├── public_slides/                  # Directori de sortida on es guarden les imatges (.jpg)
+├── generate_and_send_couples.py    # Script principal d'execució i rendering (Python 3.10)
+├── posts.csv                       # Base de dades local en format CSV (100 registres)
+├── PlayfairDisplay-Regular.ttf     # Font Serif principal (descarregada automàticament si no hi és)
+├── PlayfairDisplay-Italic.ttf      # Font Serif per a opcions de Test (descarregada automàticament)
+├── Poppins-Medium.ttf              # Font Sans per a la marca d'aigua/footer
+└── requirements.txt                # Dependències de Python (pillow, requests)
+
+-------------------------------------------------------------------------------
+3. ESQUEMA DE DADES (posts.csv)
+-------------------------------------------------------------------------------
+El fitxer `posts.csv` actua com a base de dades no relacional local. El script cerca linealment la PRIMERA fila on la columna `Status` (case-insensitive) sigui igual a 'Pending'.
+
+Camps del CSV:
+1. `Post_ID`: Identificador únic del post (ex: Post_1).
+2. `Type`: Tipus de layout gràfic. Valors admesos: 'Question' o 'Test'.
+3. `Category`: Categoria conceptual (ex: Couples).
+4. `Slide_1_Title`: Títol principal de la portada (Slide 1).
+5. `Highlight_Word`: Paraula clau continguda al títol que serà subratllada dinàmicament.
+6. `Slide_2_Question_or_Title`: Pregunta principal de la Slide 2 o enunciat del Test.
+7. `Option_A`: Text de l'opció A (només si Type == 'Test').
+8. `Option_B`: Text de l'opció B (només si Type == 'Test').
+9. `Option_C`: Text de l'opció C (només si Type == 'Test').
+10. `Option_D`: Text de l'opció D (només si Type == 'Test').
+11. `Slide_3_Question`: Pregunta per a la Slide 3.
+12. `Slide_4_Question`: Pregunta per a la Slide 4.
+13. `Slide_5_Question`: Pregunta per a la Slide 5.
+14. `Slide_6_Question`: Pregunta per a la Slide 6.
+15. `Status`: Estat del processament. Valors: 'Pending' | 'Done'.
+
+Regla de parsing defensiu: Si una fila té menys elements que `len(headers)`, el parser de Python reomple la llista amb cadenes buides (`''`) abans d'indexar per evitar `IndexError`. Les línies buides o salts de línia al final del fitxer s'ignoren automàticament.
+
+-------------------------------------------------------------------------------
+4. MOTOR DE RENDERITZACIÓ GRÀFICA I DISSENY (PIL / Pillow)
+-------------------------------------------------------------------------------
+- Mides de Canvas: 1080 x 1080 píxels (Relació d'aspecte 1:1, format quadrat).
+- Format d'exportació: JPEG (.jpg) amb qualitat=95.
+- Nombre de diapositives per post: Exactament 6 slides (No s'inclou slide de CTA final).
+
+4.1 Font d'Imatges de Fons (Unsplash API / Picsum Engine):
+Per evitar l'ús de models d'IA de pagament o amb límits de crèdits (com Hugging Face o Google AI Studio) i garantir l'absència total de persones/siluetes, s'utilitza l'API d'alta definició d'Unsplash:
+`https://picsum.photos/1080/1080?random={seed}`
+- Cadascuna de les 6 diapositives crida el motor amb una llavor (`seed`) aleatòria diferent (`random.randint(1, 999999)`), garantint un fons de paisatge o espai completament únic per a cada slide.
+
+4.2 Pipeline de Filtres Retro i Post-processament d'Imatge:
+Totes les imatges de fons passen per la funció `apply_retro_filters_and_frame()`:
+1. Reducció de contrast: `ImageEnhance.Contrast(bg_img).enhance(0.85)` (efecte foto antiga desteñida).
+2. Matriu de color vintage 35mm (Transformació Sepia/Càlida de 12 elements en PIL):
+   `warm_matrix = (1.2, 0.2, -0.1, 0,  0.1, 1.1, -0.1, 0,  0.1, 0.1, 0.8, 0)`
+   S'aplica directament via `img.convert('RGB', warm_matrix)` per a una execució en mil·lisegons.
+3. Baixada de brillantor: `ImageEnhance
