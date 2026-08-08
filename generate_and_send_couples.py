@@ -179,11 +179,9 @@ def send_telegram_media_group(message, photo_paths):
         print("ℹ️ Telegram no configurat.")
         return
     try:
-        # 1. Enviar el text informatiu
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
                       data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'})
         
-        # 2. Enviar totes les imatges com a àlbum
         media = []
         files = {}
         for idx, path in enumerate(photo_paths):
@@ -286,25 +284,44 @@ def main():
     download_file(FONT_SANS_URL, FONT_SANS_PATH)
     
     os.makedirs(SLIDES_DIR, exist_ok=True)
-    if not os.path.exists(CSV_PATH): return
+    if not os.path.exists(CSV_PATH):
+        print(f"❌ Error: Fitxer CSV no trobat a {CSV_PATH}")
+        return
 
+    # --- LECTURA SEGURA DEL CSV ---
     rows, headers = [], []
     with open(CSV_PATH, mode='r', encoding='utf-8') as f:
         reader = csv.reader(f)
-        headers = next(reader)
-        for r in reader: rows.append(r)
+        try:
+            headers = [h.strip() for h in next(reader)]
+        except StopIteration:
+            print("❌ Error: El fitxer CSV està buit.")
+            return
+            
+        for r in reader:
+            # Filtra línies totalment buides o salts de línia
+            if r and any(field.strip() for field in r):
+                rows.append(r)
+
+    if 'Status' not in headers:
+        print("❌ Error: No s'ha trobat la columna 'Status' al CSV.")
+        return
 
     status_idx = headers.index('Status')
     current_idx, post_data = None, None
     
     for idx, r in enumerate(rows):
+        # Assegura que la fila tingui la mateixa quantitat de columnes que la capçalera
+        while len(r) < len(headers):
+            r.append('')
+            
         if r[status_idx].strip().lower() == 'pending':
             current_idx = idx
             post_data = dict(zip(headers, r))
             break
 
     if current_idx is None:
-        print("🎉 Tots els posts estan completats!")
+        print("🎉 Tots els posts del CSV estan completats ('Done')!")
         return
 
     post_id = post_data.get('Post_ID', f"Post_{current_idx + 1}")
@@ -333,7 +350,7 @@ def main():
     s1.save(f1_path, "JPEG", quality=95)
     temp_files.append(f1_path)
 
-    # --- SLIDES 2 A 6 (SENSE SLIDE 7 CTA) ---
+    # --- SLIDES 2 A 6 (6 SLIDES EN TOTAL) ---
     slide_keys = ['Slide_2_Question_or_Title', 'Slide_3_Question', 'Slide_4_Question', 'Slide_5_Question', 'Slide_6_Question']
     
     for i, key in enumerate(slide_keys):
@@ -359,7 +376,7 @@ def main():
             
             y_curr += 40
             for opt_letter, opt_text in options:
-                if not opt_text: continue
+                if not opt_text.strip(): continue
                 d.text((100, y_curr), opt_letter, fill='#FFFFFF', font=font_serif_italic)
                 d.text((160, y_curr), opt_text, fill='#FFFFFF', font=font_serif_med)
                 y_curr += 65
