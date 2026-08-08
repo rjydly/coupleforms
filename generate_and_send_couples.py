@@ -8,7 +8,10 @@ import ftplib
 import subprocess
 import html
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
-from huggingface_hub import InferenceClient
+
+# Integració oficial amb Google AI Studio
+from google import genai
+from google.genai import types
 
 # ========================================================
 # CONFIGURACIÓ I RUTES
@@ -33,18 +36,11 @@ FONT_SANS_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Me
 BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-HF_TOKEN = os.getenv("HF_TOKEN")  # Secret de Hugging Face
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Clau de Google AI Studio
 
 FTP_HOST = os.getenv("FTP_HOST")
 FTP_USER = os.getenv("FTP_USER")
 FTP_PASS = os.getenv("FTP_PASS")
-
-# Models compatibles amb Hugging Face InferenceClient
-HF_MODELS = [
-    "black-forest-labs/FLUX.1-dev",
-    "stabilityai/stable-diffusion-xl-base-1.0",
-    "stabilityai/stable-diffusion-2-1"
-]
 
 # Prompts estrictament SENSE PERSONES (Només paisatges i espais)
 PROMPT_POOL = [
@@ -62,30 +58,51 @@ def download_file(url, save_path):
         with open(save_path, 'wb') as f:
             f.write(res.content)
 
-def generate_hf_background():
-    """Genera una imatge fons estil retro 35mm utilitzant Hugging Face InferenceClient"""
+def generate_background_image():
+    """Genera una imatge de paisatge 1080x1080 via Google AI Studio (Imagen 3)"""
     prompt = random.choice(PROMPT_POOL)
     
-    if HF_TOKEN:
+    if GEMINI_API_KEY:
         try:
-            print("🎨 Generant nova imatge de paisatge via Hugging Face...")
-            client = InferenceClient(api_key=HF_TOKEN, provider="auto")
+            print("🎨 Generant nova imatge de paisatge via Google AI Studio (Imagen 3)...")
+            client = genai.Client(api_key=GEMINI_API_KEY)
             
-            for model_id in HF_MODELS:
-                try:
-                    img = client.text_to_image(prompt=prompt, model=model_id)
-                    img = img.convert('RGB').resize((1080, 1080), Image.Resampling.LANCZOS)
-                    print(f"✅ Imatge generada amb el model: {model_id}")
-                    return img
-                except Exception as err_m:
-                    print(f"⚠️ Model {model_id} no disponible ({err_m}). Intentant el següent...")
+            response = client.models.generate_images(
+                model='imagen-3.0-generate-002',
+                prompt=prompt,
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                    output_mime_type='image/jpeg',
+                    aspect_ratio='1:1',
+                    negative_prompt='people, human, person, silhouette, faces, crowds'
+                )
+            )
+            
+            if response.generated_images:
+                img_bytes = response.generated_images[0].image.image_bytes
+                img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+                img = img.resize((1080, 1080), Image.Resampling.LANCZOS)
+                print("✅ Imatge generada amb èxit via Google AI Studio!")
+                return img
+                
         except Exception as e:
-            print(f"⚠️ Error del client HF: {e}")
+            print(f"⚠️ Error a Google AI Studio: {e}. Intentant fallback...")
 
-    # Fallback: Fons blau retro si l'API falla
+    # Fallback 1: Imatge real de paisatge d'alta qualitat (Unsplash)
+    try:
+        print("📷 Carregant paisatge d'alta qualitat des d'Unsplash...")
+        unsplash_url = "https://picsum.photos/1080/1080"
+        res = requests.get(unsplash_url, timeout=15)
+        if res.status_code == 200:
+            img = Image.open(io.BytesIO(res.content)).convert('RGB')
+            print("✅ Paisatge descarregat d'Unsplash!")
+            return img
+    except Exception as e:
+        print(f"⚠️ Error Unsplash: {e}")
+
+    # Fallback 2: Fons blau retro
     print("🎨 Usant fons de reserva blau retro...")
-    bg = Image.new('RGB', (1080, 1080), color='#2B4380')
-    return bg
+    return Image.new('RGB', (1080, 1080), color='#2B4380')
 
 def apply_retro_filters_and_frame(bg_img):
     """Aplica filtre retro càlid, baixada de contrast, foscor i el marc arrodonit"""
@@ -363,7 +380,7 @@ def main():
 
     for i, key in enumerate(slide_keys):
         print(f"🖼️ Generant fons retro per a la Slide {i+1}/6...")
-        base_bg = generate_hf_background()
+        base_bg = generate_background_image()
         s = apply_retro_filters_and_frame(base_bg)
         d = ImageDraw.Draw(s)
         
