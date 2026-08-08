@@ -1,16 +1,19 @@
 import os
 import csv
 import io
+import json
 import random
 import requests
 import ftplib
 import subprocess
 import html
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
 # ========================================================
 # CONFIGURACIÓ I RUTES
 # ========================================================
+TEST_MODE = True  # 🧪 Canvia a False per publicar realment a Buffer / Xarxes socials
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(BASE_DIR, 'posts.csv')
 SLIDES_DIR = os.path.join(BASE_DIR, 'public_slides')
@@ -29,7 +32,7 @@ FONT_SANS_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Me
 BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY") # Opcional si s'assoleix límit gratuït
+HF_TOKEN = os.getenv("HF_TOKEN")  # Secret de Hugging Face
 
 FTP_HOST = os.getenv("FTP_HOST")
 FTP_USER = os.getenv("FTP_USER")
@@ -58,8 +61,8 @@ def generate_hf_background():
     """Genera una imatge fons estil retro 35mm utilitzant Hugging Face API"""
     prompt = random.choice(PROMPT_POOL)
     headers = {}
-    if HUGGINGFACE_API_KEY:
-        headers["Authorization"] = f"Bearer {HUGGINGFACE_API_KEY}"
+    if HF_TOKEN:
+        headers["Authorization"] = f"Bearer {HF_TOKEN}"
     
     payload = {
         "inputs": prompt,
@@ -84,11 +87,9 @@ def generate_hf_background():
 
 def apply_retro_frame_and_overlay(bg_img):
     """Aplica el marc exterior fosca estil TV/Càmera retro i redueix brillantor"""
-    # 1. Fosc
     enhancer = ImageEnhance.Brightness(bg_img)
-    dark_bg = enhancer.enhance(0.55) # Baixar brillantor al 55%
+    dark_bg = enhancer.enhance(0.55)  # Baixar brillantor al 55%
 
-    # 2. Marc de cantonades arrodonides estil finestra retro
     width, height = 1080, 1080
     frame = Image.new('RGBA', (width, height), (10, 12, 18, 255))
     
@@ -102,11 +103,9 @@ def apply_retro_frame_and_overlay(bg_img):
         radius=radius, fill=255
     )
 
-    # Combinar imatge fosca amb el marc negre exterior
     dark_bg_rgba = dark_bg.convert('RGBA')
     final_canvas = Image.composite(dark_bg_rgba, frame, mask)
     
-    # Afegir un subtil fosc als vora interns (Vignette)
     overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw_overlay = ImageDraw.Draw(overlay)
     draw_overlay.rounded_rectangle(
@@ -150,7 +149,6 @@ def draw_title_with_underline(draw, text, highlight_word, font_title, width, sta
         
         draw.text((start_x, current_y), line, fill='#FFFFFF', font=font_title)
         
-        # Lògica de subratllat
         if highlight_word and highlight_word.lower() in line.lower():
             idx = line.lower().find(highlight_word.lower())
             word_exact = line[idx:idx+len(highlight_word)]
@@ -174,6 +172,30 @@ def draw_footer(draw, font_sans, width):
     bbox = draw.textbbox((0, 0), text, font=font_sans)
     tw = bbox[2] - bbox[0]
     draw.text(((width - tw) / 2, 920), text, fill=(255, 255, 255, 220), font=font_sans)
+
+def send_telegram_media_group(message, photo_paths):
+    """Envia l'àlbum de fotos complet (les 6 diapositives) a Telegram per a la revisió"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("ℹ️ Telegram no configurat.")
+        return
+    try:
+        # 1. Enviar el text informatiu
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                      data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'})
+        
+        # 2. Enviar totes les imatges com a àlbum
+        media = []
+        files = {}
+        for idx, path in enumerate(photo_paths):
+            file_key = f"photo_{idx}"
+            media.append({"type": "photo", "media": f"attach://{file_key}"})
+            files[file_key] = open(path, 'rb')
+        
+        payload = {'chat_id': TELEGRAM_CHAT_ID, 'media': json.dumps(media)}
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMediaGroup", data=payload, files=files)
+        print("📲 Àlbum complet de slides enviat a Telegram!")
+    except Exception as e:
+        print(f"⚠️ Error enviant àlbum a Telegram: {e}")
 
 def upload_via_ftp(file_path):
     if not (FTP_HOST and FTP_USER and FTP_PASS):
@@ -241,7 +263,7 @@ def post_to_buffer(token, image_urls, caption):
     success = True
     for ch in channels:
         service = str(ch.get("service", "")).lower()
-        if "youtube" in service: continue # Carrousels no van a YouTube
+        if "youtube" in service: continue
         
         inp = {
             "channelId": ch["id"],
@@ -257,19 +279,6 @@ def post_to_buffer(token, image_urls, caption):
         if "errors" in res.json(): success = False
         
     return success
-
-def send_telegram(message, photo_path=None):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
-    try:
-        if photo_path and os.path.exists(photo_path):
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto", 
-                          data={'chat_id': TELEGRAM_CHAT_ID, 'caption': message, 'parse_mode': 'HTML'},
-                          files={'photo': open(photo_path, 'rb')})
-        else:
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                          data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'})
-    except Exception as e:
-        print(f"⚠️ Telegram Error: {e}")
 
 def main():
     download_file(FONT_SERIF_REG_URL, FONT_SERIF_REG_PATH)
@@ -300,7 +309,7 @@ def main():
 
     post_id = post_data.get('Post_ID', f"Post_{current_idx + 1}")
     post_type = post_data.get('Type', 'Question')
-    print(f"🚀 Generant carrousel ({post_type}) per a {post_id}...")
+    print(f"🚀 Generant carrousel ({post_type}) per a {post_id} (MODE PROVA = {TEST_MODE})...")
 
     # Carregar Fonts
     font_serif_large = ImageFont.truetype(FONT_SERIF_REG_PATH, 58)
@@ -324,14 +333,14 @@ def main():
     s1.save(f1_path, "JPEG", quality=95)
     temp_files.append(f1_path)
 
-    # --- SLIDES 2 A 6 ---
+    # --- SLIDES 2 A 6 (SENSE SLIDE 7 CTA) ---
     slide_keys = ['Slide_2_Question_or_Title', 'Slide_3_Question', 'Slide_4_Question', 'Slide_5_Question', 'Slide_6_Question']
     
     for i, key in enumerate(slide_keys):
         s = framed_bg.copy()
         d = ImageDraw.Draw(s)
         
-        # Diapositiva tipus TEST (A, B, C, D) només a la Slide 2 si és Type = Test
+        # Diapositiva tipus TEST (A, B, C, D) a la Slide 2 si és Type = Test
         if i == 0 and post_type.lower() == 'test':
             q_text = post_data.get('Slide_2_Question_or_Title', '')
             options = [
@@ -341,7 +350,6 @@ def main():
                 ('D) ', post_data.get('Option_D', ''))
             ]
             
-            # Pregunta superior
             lines = wrap_text(q_text, d, font_serif_med, 900)
             y_curr = 240
             for l in lines:
@@ -349,16 +357,13 @@ def main():
                 d.text((100, y_curr), l, fill='#FFFFFF', font=font_serif_med)
                 y_curr += (bbox[3] - bbox[1]) + 16
             
-            # Opcions inferiors
             y_curr += 40
             for opt_letter, opt_text in options:
                 if not opt_text: continue
-                # Lletra en Itàlica, text en Regular
                 d.text((100, y_curr), opt_letter, fill='#FFFFFF', font=font_serif_italic)
                 d.text((160, y_curr), opt_text, fill='#FFFFFF', font=font_serif_med)
                 y_curr += 65
         else:
-            # Diapositiva de pregunta estàndard
             q_text = post_data.get(key, '')
             lines = wrap_text(q_text, d, font_serif_med, 880)
             line_heights = [d.textbbox((0, 0), l, font=font_serif_med)[3] - d.textbbox((0, 0), l, font=font_serif_med)[1] for l in lines]
@@ -376,50 +381,51 @@ def main():
         s.save(f_path, "JPEG", quality=95)
         temp_files.append(f_path)
 
-    # --- SLIDE 7: CTA (feel closer with formfriends) ---
-    s7 = framed_bg.copy()
-    d7 = ImageDraw.Draw(s7)
-    
-    # Text CTA Estil Flamingo
-    d7.text((180, 220), "feel closer with", fill='#FFFFFF', font=font_serif_italic)
-    d7.text((180, 280), "formfriends", fill='#FFFFFF', font=font_serif_large)
-    
-    # Targeta App Store estil mockup
-    card_box = [(180, 440), (900, 720)]
-    d7.rounded_rectangle(card_box, radius=30, fill=(0, 0, 0, 180), outline=(255, 255, 255, 60), width=1)
-    
-    d7.text((220, 480), "formfriends cards", fill='#FFFFFF', font=font_serif_med)
-    d7.text((220, 550), "deep questions. couple convos.", fill='#DDDDDD', font=font_sans_footer)
-    
-    # Botó GET
-    d7.rounded_rectangle([(220, 610), (360, 670)], radius=25, fill='#3B82F6')
-    d7.text((260, 625), "Get", fill='#FFFFFF', font=font_serif_med)
-    
-    draw_footer(d7, font_sans_footer, 1080)
-    
-    f7_path = os.path.join(SLIDES_DIR, f"{post_id}_slide_7.jpg")
-    s7.save(f7_path, "JPEG", quality=95)
-    temp_files.append(f7_path)
-
-    # Captions
     tags = "#couples #relationshipgoals #deepquestions #couplesgame #formfriends"
     caption = f"{post_data.get('Slide_1_Title', '')}\n\nTag your person and answer in the comments. ✨\n\nLink in bio to play formfriends.com\n\n—\n{tags}"
 
-    if not BUFFER_ACCESS_TOKEN:
-        print("⚠️ BUFFER_ACCESS_TOKEN no configurat.")
-        return
+    if TEST_MODE:
+        # ========================================================
+        # MODE PROVA: NOMÉS ENVIAMENT A TELEGRAM
+        # ========================================================
+        print("🧪 MODE PROVA ACTIVAT: S'omet Buffer. Enviant les 6 imatges a Telegram...")
+        title_text = html.escape(post_data.get('Slide_1_Title', ''))
+        telegram_msg = (
+            f"🧪 <b>[MODE PROVA] {post_id} generat ({post_type})</b>\n\n"
+            f"📖 <b>Títol:</b> {title_text}\n"
+            f"🏷️ <b>Hashtags:</b> {tags}\n\n"
+            f"<i>No s'ha enviat a Buffer. Comprova les 6 diapositives a l'àlbum adjunt!</i>"
+        )
+        send_telegram_media_group(telegram_msg, temp_files)
 
-    public_urls = get_public_image_urls(temp_files)
-    print("📤 Enviant carrousel a Buffer...")
-    
-    if post_to_buffer(BUFFER_ACCESS_TOKEN, public_urls, caption):
-        send_telegram(f"🚀 <b>{post_id} publicat!</b>\n\n📖 {html.escape(post_data.get('Slide_1_Title', ''))}", photo_path=temp_files[0])
         rows[current_idx][status_idx] = 'Done'
         with open(CSV_PATH, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(headers)
             writer.writerows(rows)
-        print(f"📝 CSV actualitzat! {post_id} -> Done.")
+        print(f"📝 CSV actualitzat (Mode Prova)! {post_id} -> Done.")
+
+    else:
+        # ========================================================
+        # MODE PRODUCCIÓ: PUBLICACIÓ A BUFFER
+        # ========================================================
+        if not BUFFER_ACCESS_TOKEN:
+            print("⚠️ BUFFER_ACCESS_TOKEN no configurat.")
+            return
+
+        public_urls = get_public_image_urls(temp_files)
+        print("📤 Enviant carrousel a Buffer...")
+        
+        if post_to_buffer(BUFFER_ACCESS_TOKEN, public_urls, caption):
+            telegram_msg = f"🚀 <b>{post_id} publicat amb èxit!</b>\n\n📖 {html.escape(post_data.get('Slide_1_Title', ''))}"
+            send_telegram_media_group(telegram_msg, temp_files)
+            
+            rows[current_idx][status_idx] = 'Done'
+            with open(CSV_PATH, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                writer.writerows(rows)
+            print(f"📝 CSV actualitzat! {post_id} -> Done.")
 
 if __name__ == "__main__":
     main()
