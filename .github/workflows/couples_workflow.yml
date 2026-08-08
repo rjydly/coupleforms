@@ -1,37 +1,42 @@
-name: Generate and Send Couples Posts
+name: Generate and Post Couples Carousels
 
 on:
+  workflow_dispatch: # Permet executar-lo manualment des del botó "Run workflow" de GitHub
   schedule:
-    - cron: '0 12 * * *'  # S'executa cada dia a les 12:00 UTC
-  workflow_dispatch:      # Permet botó manual "Run workflow"
+    - cron: '0 8 * * *'   # S'executa automàticament a les 08:00 UTC
+    - cron: '0 14 * * *'  # S'executa automàticament a les 14:00 UTC
+    - cron: '0 20 * * *'  # S'executa automàticament a les 20:00 UTC
+
+permissions:
+  contents: write # Permís imprescindible per poder fer commit i guardar el posts.csv i les imatges
 
 jobs:
-  build-and-send:
+  generate-and-post:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
-      - name: Checkout Repository
+      - name: 📦 Checkout Repositori
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: 🐍 Configurar Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
 
-      - name: Install Dependencies
+      - name: ⚙️ Instal·lar Dependències
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Run Couples Script
+      - name: 🚀 Executar Script de Generació i Enviament
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           BUFFER_ACCESS_TOKEN: ${{ secrets.BUFFER_ACCESS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASS: ${{ secrets.FTP_PASS }}
-        run: python generate_and_send_couples.py
+        run: |
+          python generate_and_send_couples.py
