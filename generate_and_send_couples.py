@@ -134,37 +134,32 @@ def apply_retro_filters_and_frame(bg_img):
 
     # 3. Fosc per garantir la llegibilitat del text blanc (brillantor reduïda per destacar el text)
     brightness_enhancer = ImageEnhance.Brightness(img_warm)
-    dark_bg = brightness_enhancer.enhance(0.34)
+    dark_bg = brightness_enhancer.enhance(0.42)
 
-    # 4. Marc exterior 100% negre amb "black fade" cap a la imatge (vora difuminada, no una línia dura)
+    # 4. Marc exterior 100% negre amb un blackfade estret a la vora (sense línia de contorn visible).
+    # Tècnica: dibuixem la màscara interior MÉS GRAN que el marc real i després difuminem,
+    # de manera que la transició negre→imatge caigui exactament sobre la vora arrodonida
+    # sense deixar cap anell o línia de tall visible.
     width, height = 1080, 1080
     frame = Image.new('RGBA', (width, height), (0, 0, 0, 255))
 
-    margin = 40
-    radius = 70
-    # Màscara nítida (blanc = es veu la foto, negre = es veu el marc)...
+    blur_r   = 10   # radi de difuminat (píxels de transició)
+    margin   = 28   # vora negra visible (reduïda respecte a l'anterior)
+    radius   = 60   # arrodoniment de cantonades
+    inner_m  = margin - blur_r  # interior de la màscara desplaçat cap enfora perquè el blur centri la transició a 'margin'
+
     mask = Image.new('L', (width, height), 0)
     draw_mask = ImageDraw.Draw(mask)
     draw_mask.rounded_rectangle(
-        [(margin, margin), (width - margin, height - margin)],
-        radius=radius, fill=255
+        [(inner_m, inner_m), (width - inner_m, height - inner_m)],
+        radius=radius + blur_r, fill=255
     )
-    # ...i després la difuminem: això converteix la vora dura en un degradat suau
-    # (blackfade) entre el marc negre i la imatge de fons.
-    mask = mask.filter(ImageFilter.GaussianBlur(radius=22))
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_r))
 
     dark_bg_rgba = dark_bg.convert('RGBA')
     final_canvas = Image.composite(dark_bg_rgba, frame, mask)
 
-    # Vinyeta interior addicional molt subtil, per reforçar encara més la vora
-    overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-    draw_overlay = ImageDraw.Draw(overlay)
-    draw_overlay.rounded_rectangle(
-        [(margin, margin), (width - margin, height - margin)],
-        radius=radius, outline=(0, 0, 0, 70), width=3
-    )
-
-    return Image.alpha_composite(final_canvas, overlay).convert('RGB')
+    return final_canvas.convert('RGB')
 
 def wrap_text(text, draw, font, max_width):
     lines = []
@@ -475,18 +470,11 @@ def main():
     post_id = post_data.get('Post_ID', f"Post_{current_idx + 1}")
     print(f"🚀 Generant carrousel ({post_type}) per a {post_id} des de {os.path.basename(csv_path)} (MODE PROVA = {TEST_MODE})...")
 
-    # Carregar Fonts (mateixa família Playfair Display, mida més gran + pes semibold/bold
-    # per a més llegibilitat, aprofitant que el .ttf descarregat és un font variable amb eix 'wght')
-    font_serif_large = ImageFont.truetype(FONT_SERIF_REG_PATH, 66)
-    font_serif_med = ImageFont.truetype(FONT_SERIF_REG_PATH, 52)
-    font_serif_italic = ImageFont.truetype(FONT_SERIF_ITALIC_PATH, 46)
+    # Carregar Fonts
+    font_serif_large = ImageFont.truetype(FONT_SERIF_REG_PATH, 58)
+    font_serif_med = ImageFont.truetype(FONT_SERIF_REG_PATH, 46)
+    font_serif_italic = ImageFont.truetype(FONT_SERIF_ITALIC_PATH, 44)
     font_sans_footer = ImageFont.truetype(FONT_SANS_PATH, 28)
-
-    for _f, _weight in ((font_serif_large, 700), (font_serif_med, 600)):
-        try:
-            _f.set_variation_by_axes([_weight])
-        except Exception:
-            pass  # si el font descarregat no fos variable, es queda al pes per defecte
 
     temp_files = []
 
