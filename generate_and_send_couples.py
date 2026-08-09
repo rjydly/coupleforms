@@ -19,7 +19,17 @@ from google.genai import types
 TEST_MODE = True  # 🧪 Canvia a False per publicar realment a Buffer / Xarxes socials
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CSV_PATH = os.path.join(BASE_DIR, 'posts.csv')
+
+# Dos fitxers CSV independents, cadascun amb el seu propi esquema:
+#  - posts.csv       -> posts 'Question' (5 preguntes normals, sense opcions)
+#  - posts_test.csv  -> posts 'Test' (5 preguntes, cadascuna amb 4 opcions A-D)
+CSV_QUESTION_PATH = os.path.join(BASE_DIR, 'posts.csv')
+CSV_TEST_PATH = os.path.join(BASE_DIR, 'posts_test.csv')
+
+# Fitxer d'estat minúscul que recorda quin tipus de post toca la propera vegada,
+# per poder intercalar Question / Test entre execucions consecutives del workflow.
+STATE_PATH = os.path.join(BASE_DIR, 'next_post_type.txt')
+
 SLIDES_DIR = os.path.join(BASE_DIR, 'public_slides')
 
 # Fonts elegants estil Serif (Playfair Display) i Sans (Poppins)
@@ -51,6 +61,10 @@ PROMPT_POOL = [
     "serene mountain reflection on a quiet lake at sunrise, retro 35mm aesthetic, soft warm glow, untouched nature landscape, empty scenery, no humans"
 ]
 
+# ========================================================
+# UTILITATS GENERALS
+# ========================================================
+
 def download_file(url, save_path):
     if not os.path.exists(save_path):
         print(f"📥 Descarregant: {os.path.basename(save_path)}...")
@@ -61,12 +75,12 @@ def download_file(url, save_path):
 def generate_background_image():
     """Genera una imatge de paisatge 1080x1080 via Google AI Studio (Imagen 3)"""
     prompt = random.choice(PROMPT_POOL)
-    
+
     if GEMINI_API_KEY:
         try:
             print("🎨 Generant nova imatge de paisatge via Google AI Studio (Imagen 3)...")
             client = genai.Client(api_key=GEMINI_API_KEY)
-            
+
             response = client.models.generate_images(
                 model='imagen-3.0-generate-002',
                 prompt=prompt,
@@ -77,14 +91,14 @@ def generate_background_image():
                     negative_prompt='people, human, person, silhouette, faces, crowds'
                 )
             )
-            
+
             if response.generated_images:
                 img_bytes = response.generated_images[0].image.image_bytes
                 img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
                 img = img.resize((1080, 1080), Image.Resampling.LANCZOS)
                 print("✅ Imatge generada amb èxit via Google AI Studio!")
                 return img
-                
+
         except Exception as e:
             print(f"⚠️ Error a Google AI Studio: {e}. Intentant fallback...")
 
@@ -125,10 +139,10 @@ def apply_retro_filters_and_frame(bg_img):
     # 4. Marc exterior fosc amb cantonades arrodonides
     width, height = 1080, 1080
     frame = Image.new('RGBA', (width, height), (10, 12, 18, 255))
-    
+
     mask = Image.new('L', (width, height), 0)
     draw_mask = ImageDraw.Draw(mask)
-    
+
     margin = 40
     radius = 70
     draw_mask.rounded_rectangle(
@@ -138,7 +152,7 @@ def apply_retro_filters_and_frame(bg_img):
 
     dark_bg_rgba = dark_bg.convert('RGBA')
     final_canvas = Image.composite(dark_bg_rgba, frame, mask)
-    
+
     # Vignette interior suau
     overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw_overlay = ImageDraw.Draw(overlay)
@@ -146,7 +160,7 @@ def apply_retro_filters_and_frame(bg_img):
         [(margin, margin), (width - margin, height - margin)],
         radius=radius, outline=(0, 0, 0, 90), width=6
     )
-    
+
     return Image.alpha_composite(final_canvas, overlay).convert('RGB')
 
 def wrap_text(text, draw, font, max_width):
@@ -170,35 +184,64 @@ def draw_title_with_underline(draw, text, highlight_word, font_title, width, sta
     """Dibuixa el títol centrat i subratlla la paraula destacada"""
     max_w = width - 180
     lines = wrap_text(text, draw, font_title, max_w)
-    
+
     line_heights = [draw.textbbox((0, 0), l, font=font_title)[3] - draw.textbbox((0, 0), l, font=font_title)[1] for l in lines]
     total_h = sum(line_heights) + (24 * (len(lines) - 1))
-    
+
     current_y = start_y if start_y else (1080 - total_h) / 2
-    
+
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font_title)
         line_w = bbox[2] - bbox[0]
         start_x = (width - line_w) / 2
-        
+
         draw.text((start_x, current_y), line, fill='#FFFFFF', font=font_title)
-        
+
         if highlight_word and highlight_word.lower() in line.lower():
             idx = line.lower().find(highlight_word.lower())
             word_exact = line[idx:idx+len(highlight_word)]
-            
+
             pre_text = line[:idx]
             pre_w = draw.textbbox((0, 0), pre_text, font=font_title)[2] - draw.textbbox((0, 0), pre_text, font=font_title)[0] if pre_text else 0
-            
+
             word_w = draw.textbbox((0, 0), word_exact, font=font_title)[2] - draw.textbbox((0, 0), word_exact, font=font_title)[0]
-            
+
             ux1 = start_x + pre_w
             ux2 = ux1 + word_w
             uy = current_y + (bbox[3] - bbox[1]) + 10
-            
+
             draw.line([(ux1, uy), (ux2, uy)], fill='#FFFFFF', width=4)
-            
+
         current_y += (bbox[3] - bbox[1]) + 24
+
+def draw_question_slide(draw, text, font, width):
+    """Dibuixa una diapositiva de pregunta normal (sense opcions), centrada verticalment"""
+    lines = wrap_text(text, draw, font, 880)
+    line_heights = [draw.textbbox((0, 0), l, font=font)[3] - draw.textbbox((0, 0), l, font=font)[1] for l in lines]
+    total_h = sum(line_heights) + (22 * (len(lines) - 1))
+
+    y_curr = (1080 - total_h) / 2
+    for l in lines:
+        bbox = draw.textbbox((0, 0), l, font=font)
+        draw.text((100, y_curr), l, fill='#FFFFFF', font=font)
+        y_curr += (bbox[3] - bbox[1]) + 22
+
+def draw_test_slide(draw, question_text, options, font_question, font_option_letter, font_option_text, width):
+    """Dibuixa una diapositiva de tipus Test: pregunta + fins a 4 opcions (A-D)"""
+    lines = wrap_text(question_text, draw, font_question, 900)
+    y_curr = 240
+    for l in lines:
+        bbox = draw.textbbox((0, 0), l, font=font_question)
+        draw.text((100, y_curr), l, fill='#FFFFFF', font=font_question)
+        y_curr += (bbox[3] - bbox[1]) + 16
+
+    y_curr += 40
+    for opt_letter, opt_text in options:
+        if not str(opt_text).strip():
+            continue
+        draw.text((100, y_curr), opt_letter, fill='#FFFFFF', font=font_option_letter)
+        draw.text((160, y_curr), opt_text, fill='#FFFFFF', font=font_option_text)
+        y_curr += 65
 
 def draw_footer(draw, font_sans, width):
     """Marca d'aigua inferior discreta"""
@@ -213,16 +256,16 @@ def send_telegram_media_group(message, photo_paths):
         print("ℹ️ Telegram no configurat.")
         return
     try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
                       data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'})
-        
+
         media = []
         files = {}
         for idx, path in enumerate(photo_paths):
             file_key = f"photo_{idx}"
             media.append({"type": "photo", "media": f"attach://{file_key}"})
             files[file_key] = open(path, 'rb')
-        
+
         payload = {'chat_id': TELEGRAM_CHAT_ID, 'media': json.dumps(media)}
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMediaGroup", data=payload, files=files)
         print("📲 Àlbum complet de slides enviat a Telegram!")
@@ -257,31 +300,47 @@ def get_public_image_urls(temp_files):
     repo = os.getenv("GITHUB_REPOSITORY")
     branch = os.getenv("GITHUB_REF_NAME", "main")
     if repo:
-        try:
-            subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
-            subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
-            subprocess.run(["git", "add", "public_slides/"], check=True)
-            subprocess.run(["git", "commit", "-m", "upload: slides"], check=False)
-            subprocess.run(["git", "push"], check=False)
-        except: pass
+        commit_repo_files(["public_slides/"], "upload: slides")
         return [f"https://raw.githubusercontent.com/{repo}/{branch}/public_slides/{os.path.basename(f)}" for f in temp_files]
 
     raise Exception("❌ Sense URL pública.")
 
+def commit_repo_files(paths, message):
+    """Fa `git add` només dels paths indicats, commit i push.
+    S'utilitza tant per pujar imatges com -crucialment- per persistir els canvis
+    d'Status als CSV i al fitxer d'estat d'alternança; sense això, el workflow
+    reprocessaria sempre la mateixa fila 'Pending' perquè cada run parteix
+    d'un checkout net del repositori.
+    """
+    repo = os.getenv("GITHUB_REPOSITORY")
+    if not repo:
+        print("ℹ️ No s'ha detectat GITHUB_REPOSITORY: s'omet el commit (execució local).")
+        return False
+    try:
+        subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
+        subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
+        subprocess.run(["git", "add"] + list(paths), check=True)
+        commit_res = subprocess.run(["git", "commit", "-m", message], check=False)
+        subprocess.run(["git", "push"], check=False)
+        return commit_res.returncode == 0
+    except Exception as e:
+        print(f"⚠️ Error fent commit/push: {e}")
+        return False
+
 def post_to_buffer(token, image_urls, caption):
     buffer_url = "https://api.buffer.com"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    
+
     org_res = requests.post(buffer_url, headers=headers, json={"query": "query { account { organizations { id } } }"})
     orgs = org_res.json().get("data", {}).get("account", {}).get("organizations", [])
     if not orgs: return False
-    
+
     ch_res = requests.post(buffer_url, headers=headers, json={
         "query": "query GetChannels($input: ChannelsInput!) { channels(input: $input) { id service displayName } }",
         "variables": {"input": {"organizationId": orgs[0]["id"]}}
     })
     channels = ch_res.json().get("data", {}).get("channels", [])
-    
+
     assets = [{"image": {"url": url}} for url in image_urls]
     mutation = """
     mutation CreatePost($input: CreatePostInput!) {
@@ -291,12 +350,12 @@ def post_to_buffer(token, image_urls, caption):
       }
     }
     """
-    
+
     success = True
     for ch in channels:
         service = str(ch.get("service", "")).lower()
         if "youtube" in service: continue
-        
+
         inp = {
             "channelId": ch["id"],
             "text": caption,
@@ -306,59 +365,112 @@ def post_to_buffer(token, image_urls, caption):
         }
         if "instagram" in service:
             inp["metadata"] = {"instagram": {"type": "post", "shouldShareToFeed": True}}
-            
+
         res = requests.post(buffer_url, headers=headers, json={"query": mutation, "variables": {"input": inp}})
         if "errors" in res.json(): success = False
-        
+
     return success
 
-def main():
-    download_file(FONT_SERIF_REG_URL, FONT_SERIF_REG_PATH)
-    download_file(FONT_SERIF_ITALIC_URL, FONT_SERIF_ITALIC_PATH)
-    download_file(FONT_SANS_URL, FONT_SANS_PATH)
-    
-    os.makedirs(SLIDES_DIR, exist_ok=True)
-    if not os.path.exists(CSV_PATH):
-        print(f"❌ Error: Fitxer CSV no trobat a {CSV_PATH}")
-        return
+# ========================================================
+# LECTURA DE CSV I ALTERNANÇA DE TIPUS DE POST
+# ========================================================
 
-    # LECTURA SEGURA DEL CSV
+def read_csv_safe(csv_path):
+    """Lectura defensiva d'un CSV: retorna (headers, rows) amb totes les files
+    completades a la mida de headers per evitar IndexError."""
+    if not os.path.exists(csv_path):
+        print(f"❌ Error: Fitxer CSV no trobat a {csv_path}")
+        return None, None
+
     rows, headers = [], []
-    with open(CSV_PATH, mode='r', encoding='utf-8') as f:
+    with open(csv_path, mode='r', encoding='utf-8') as f:
         reader = csv.reader(f)
         try:
             headers = [h.strip() for h in next(reader)]
         except StopIteration:
-            print("❌ Error: El fitxer CSV està buit.")
-            return
-            
+            print(f"❌ Error: El fitxer {csv_path} està buit.")
+            return None, None
+
         for r in reader:
             if r and any(field.strip() for field in r):
                 rows.append(r)
 
     if 'Status' not in headers:
-        print("❌ Error: No s'ha trobat la columna 'Status' al CSV.")
+        print(f"❌ Error: No s'ha trobat la columna 'Status' a {csv_path}.")
+        return None, None
+
+    status_idx = headers.index('Status')
+    for r in rows:
+        while len(r) < len(headers):
+            r.append('')
+
+    return headers, rows
+
+def find_first_pending(headers, rows):
+    status_idx = headers.index('Status')
+    for idx, r in enumerate(rows):
+        if r[status_idx].strip().lower() == 'pending':
+            return idx, dict(zip(headers, r))
+    return None, None
+
+def write_csv_safe(csv_path, headers, rows):
+    with open(csv_path, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        writer.writerows(rows)
+
+def load_next_post_type():
+    """Llegeix quin tipus de post toca aquesta execució ('question' o 'test').
+    Si no existeix el fitxer d'estat (primera execució), es comença per 'question'."""
+    if os.path.exists(STATE_PATH):
+        with open(STATE_PATH, 'r', encoding='utf-8') as f:
+            value = f.read().strip().lower()
+        if value in ('question', 'test'):
+            return value
+    return 'question'
+
+def save_next_post_type(post_type):
+    with open(STATE_PATH, 'w', encoding='utf-8') as f:
+        f.write(post_type)
+
+def pick_post_to_process():
+    """Determina quin CSV/tipus de post cal processar aquesta execució, alternant
+    entre 'question' i 'test'. Si el tipus que tocava no té cap fila 'Pending',
+    es prova amb l'altre tipus per no bloquejar el pipeline."""
+    preferred_type = load_next_post_type()
+    other_type = 'test' if preferred_type == 'question' else 'question'
+
+    for post_type in (preferred_type, other_type):
+        csv_path = CSV_TEST_PATH if post_type == 'test' else CSV_QUESTION_PATH
+        headers, rows = read_csv_safe(csv_path)
+        if headers is None:
+            continue
+        idx, post_data = find_first_pending(headers, rows)
+        if idx is not None:
+            return post_type, csv_path, headers, rows, idx, post_data
+
+    return None, None, None, None, None, None
+
+# ========================================================
+# MAIN
+# ========================================================
+
+def main():
+    download_file(FONT_SERIF_REG_URL, FONT_SERIF_REG_PATH)
+    download_file(FONT_SERIF_ITALIC_URL, FONT_SERIF_ITALIC_PATH)
+    download_file(FONT_SANS_URL, FONT_SANS_PATH)
+
+    os.makedirs(SLIDES_DIR, exist_ok=True)
+
+    post_type, csv_path, headers, rows, current_idx, post_data = pick_post_to_process()
+
+    if post_type is None:
+        print("🎉 Tots els posts d'ambdós CSV estan completats ('Done')!")
         return
 
     status_idx = headers.index('Status')
-    current_idx, post_data = None, None
-    
-    for idx, r in enumerate(rows):
-        while len(r) < len(headers):
-            r.append('')
-            
-        if r[status_idx].strip().lower() == 'pending':
-            current_idx = idx
-            post_data = dict(zip(headers, r))
-            break
-
-    if current_idx is None:
-        print("🎉 Tots els posts del CSV estan completats ('Done')!")
-        return
-
     post_id = post_data.get('Post_ID', f"Post_{current_idx + 1}")
-    post_type = post_data.get('Type', 'Question')
-    print(f"🚀 Generant carrousel ({post_type}) per a {post_id} (MODE PROVA = {TEST_MODE})...")
+    print(f"🚀 Generant carrousel ({post_type}) per a {post_id} des de {os.path.basename(csv_path)} (MODE PROVA = {TEST_MODE})...")
 
     # Carregar Fonts
     font_serif_large = ImageFont.truetype(FONT_SERIF_REG_PATH, 58)
@@ -369,68 +481,53 @@ def main():
     temp_files = []
 
     # --- GENERACIÓ DE LES 6 DIAPOSITIVES AMB FONTS INDEPENDENTS ---
-    slide_keys = [
-        'Slide_1_Title',
-        'Slide_2_Question_or_Title',
-        'Slide_3_Question',
-        'Slide_4_Question',
-        'Slide_5_Question',
-        'Slide_6_Question'
-    ]
-
-    for i, key in enumerate(slide_keys):
+    for i in range(6):
         print(f"🖼️ Generant fons retro per a la Slide {i+1}/6...")
         base_bg = generate_background_image()
         s = apply_retro_filters_and_frame(base_bg)
         d = ImageDraw.Draw(s)
-        
+
         if i == 0:
-            # --- SLIDE 1: PORTADA ---
+            # --- SLIDE 1: PORTADA (comuna a tots dos esquemes) ---
             draw_title_with_underline(d, post_data.get('Slide_1_Title', ''), post_data.get('Highlight_Word', ''), font_serif_large, 1080, None)
-        elif i == 1 and post_type.lower() == 'test':
-            # --- SLIDE 2: TEST (Opcions A, B, C, D) ---
-            q_text = post_data.get('Slide_2_Question_or_Title', '')
+
+        elif post_type == 'test':
+            # --- SLIDES 2-6: TEST, cadascuna amb la seva pròpia pregunta + opcions A-D ---
+            q_text = post_data.get(f'Slide_{i+1}_Question', '')
             options = [
-                ('A) ', post_data.get('Option_A', '')),
-                ('B) ', post_data.get('Option_B', '')),
-                ('C) ', post_data.get('Option_C', '')),
-                ('D) ', post_data.get('Option_D', ''))
+                ('A) ', post_data.get(f'Slide_{i+1}_OptA', '')),
+                ('B) ', post_data.get(f'Slide_{i+1}_OptB', '')),
+                ('C) ', post_data.get(f'Slide_{i+1}_OptC', '')),
+                ('D) ', post_data.get(f'Slide_{i+1}_OptD', '')),
             ]
-            
-            lines = wrap_text(q_text, d, font_serif_med, 900)
-            y_curr = 240
-            for l in lines:
-                bbox = d.textbbox((0, 0), l, font=font_serif_med)
-                d.text((100, y_curr), l, fill='#FFFFFF', font=font_serif_med)
-                y_curr += (bbox[3] - bbox[1]) + 16
-            
-            y_curr += 40
-            for opt_letter, opt_text in options:
-                if not opt_text.strip(): continue
-                d.text((100, y_curr), opt_letter, fill='#FFFFFF', font=font_serif_italic)
-                d.text((160, y_curr), opt_text, fill='#FFFFFF', font=font_serif_med)
-                y_curr += 65
+            draw_test_slide(d, q_text, options, font_serif_med, font_serif_italic, font_serif_med, 1080)
+
         else:
-            # --- SLIDES 2 A 6: PREGUNTES ESTÀNDARD ---
+            # --- SLIDES 2-6: QUESTION, preguntes normals sense opcions ---
+            key = 'Slide_2_Question_or_Title' if i == 1 else f'Slide_{i+1}_Question'
             q_text = post_data.get(key, '')
-            lines = wrap_text(q_text, d, font_serif_med, 880)
-            line_heights = [d.textbbox((0, 0), l, font=font_serif_med)[3] - d.textbbox((0, 0), l, font=font_serif_med)[1] for l in lines]
-            total_h = sum(line_heights) + (22 * (len(lines) - 1))
-            
-            y_curr = (1080 - total_h) / 2
-            for l in lines:
-                bbox = d.textbbox((0, 0), l, font=font_serif_med)
-                d.text((100, y_curr), l, fill='#FFFFFF', font=font_serif_med)
-                y_curr += (bbox[3] - bbox[1]) + 22
-                
+            draw_question_slide(d, q_text, font_serif_med, 1080)
+
         draw_footer(d, font_sans_footer, 1080)
-        
+
         f_path = os.path.join(SLIDES_DIR, f"{post_id}_slide_{i+1}.jpg")
         s.save(f_path, "JPEG", quality=95)
         temp_files.append(f_path)
 
     tags = "#couples #relationshipgoals #deepquestions #couplesgame #formfriends"
     caption = f"{post_data.get('Slide_1_Title', '')}\n\nTag your person and answer in the comments. ✨\n\nLink in bio to play formfriends.com\n\n—\n{tags}"
+
+    # Marquem la fila com a 'Done' i l'escrivim sempre, independentment del mode,
+    # perquè el següent run (test o producció) no la torni a agafar.
+    rows[current_idx][status_idx] = 'Done'
+    write_csv_safe(csv_path, headers, rows)
+
+    # Alternem el tipus per a la propera execució.
+    next_type = 'test' if post_type == 'question' else 'question'
+    save_next_post_type(next_type)
+
+    csv_relpath = os.path.relpath(csv_path, BASE_DIR)
+    state_relpath = os.path.relpath(STATE_PATH, BASE_DIR)
 
     if TEST_MODE:
         # ========================================================
@@ -446,12 +543,10 @@ def main():
         )
         send_telegram_media_group(telegram_msg, temp_files)
 
-        rows[current_idx][status_idx] = 'Done'
-        with open(CSV_PATH, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
-            writer.writerows(rows)
-        print(f"📝 CSV actualitzat (Mode Prova)! {post_id} -> Done.")
+        # Persistim SEMPRE el canvi d'Status i l'estat d'alternança al repositori,
+        # també en mode prova, o el pipeline es quedaria bloclat repetint el mateix post.
+        commit_repo_files([csv_relpath, state_relpath], f"chore: {post_id} -> Done (mode prova, {post_type})")
+        print(f"📝 CSV actualitzat (Mode Prova)! {post_id} -> Done. Proper tipus: {next_type}.")
 
     else:
         # ========================================================
@@ -463,17 +558,13 @@ def main():
 
         public_urls = get_public_image_urls(temp_files)
         print("📤 Enviant carrousel a Buffer...")
-        
+
         if post_to_buffer(BUFFER_ACCESS_TOKEN, public_urls, caption):
             telegram_msg = f"🚀 <b>{post_id} publicat amb èxit!</b>\n\n📖 {html.escape(post_data.get('Slide_1_Title', ''))}"
             send_telegram_media_group(telegram_msg, temp_files)
-            
-            rows[current_idx][status_idx] = 'Done'
-            with open(CSV_PATH, mode='w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                writer.writerow(headers)
-                writer.writerows(rows)
-            print(f"📝 CSV actualitzat! {post_id} -> Done.")
+
+        commit_repo_files([csv_relpath, state_relpath], f"chore: {post_id} -> Done ({post_type})")
+        print(f"📝 CSV actualitzat! {post_id} -> Done. Proper tipus: {next_type}.")
 
 if __name__ == "__main__":
     main()
