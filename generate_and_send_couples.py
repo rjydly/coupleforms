@@ -16,7 +16,7 @@ from google.genai import types
 # ========================================================
 # CONFIGURACIÓ I RUTES
 # ========================================================
-TEST_MODE = True  # 🧪 Canvia a False per publicar realment a Buffer / Xarxes socials
+TEST_MODE = False  # 🧪 Canvia a False per publicar realment a Buffer / Xarxes socials
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
