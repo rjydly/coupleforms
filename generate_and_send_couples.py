@@ -1,40 +1,48 @@
 import os
 import csv
-import io
-import json
 import random
 import requests
-import ftplib
-import subprocess
 import html
+import subprocess
+
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
 
-# Integració oficial amb Google AI Studio
-from google import genai
-from google.genai import types
+# 🛠️ Fix per a compatibilitat de MoviePy 1.0.3 amb Pillow >= 10.0.0
+if not hasattr(Image, 'ANTIALIAS'):
+    Image.ANTIALIAS = Image.Resampling.LANCZOS
+
+# Imports compatibles tant amb MoviePy v1.x com v2.x
+try:
+    from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
+except ImportError:
+    from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
 
 # ========================================================
-# CONFIGURACIÓ I RUTES
+# CONFIGURACIÓ I PARÀMETRES DE PROVA
 # ========================================================
-TEST_MODE = False  # 🧪 Canvia a False per publicar realment a Buffer / Xarxes socials
+TEST_MODE = True  # 🧪 Canvia a False per a producció (publicar a Buffer)
+
+# Permet forçar un tipus de vídeo específic.
+# Valors admesos: 'type1', 'type2', 'type3', 'type4', 'type5' o None (per a rotació automàtica)
+FORCE_TYPE = "type1"  # 👈 Canvia això a 'type1', 'type2', etc. per provar cadascun!
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+VIDEOS_DIR = os.path.join(BASE_DIR, 'public_videos')
+VIDEOS_CSV_DIR = os.path.join(BASE_DIR, 'videos')  # Carpeta on tens els 5 CSVs
 
-# Dos fitxers CSV independents, cadascun amb el seu propi esquema:
-#  - posts.csv       -> posts 'Question' (5 preguntes normals, sense opcions)
-#  - posts_test.csv  -> posts 'Test' (5 preguntes, cadascuna amb 4 opcions A-D)
-CSV_QUESTION_PATH = os.path.join(BASE_DIR, 'posts.csv')
-CSV_TEST_PATH = os.path.join(BASE_DIR, 'posts_test.csv')
+STATE_PATH = os.path.join(BASE_DIR, 'next_video_type.txt')
 
-# Fitxer d'estat minúscul que recorda quin tipus de post toca la propera vegada,
-# per poder intercalar Question / Test entre execucions consecutives del workflow.
-STATE_PATH = os.path.join(BASE_DIR, 'next_post_type.txt')
+# Rutes dels 5 CSVs independents dins de /videos/
+CSV_PATHS = {
+    'type1': os.path.join(VIDEOS_CSV_DIR, 'video_phrases.csv'),     # Frase Central
+    'type2': os.path.join(VIDEOS_CSV_DIR, 'video_questions.csv'),   # 3 Preguntes
+    'type3': os.path.join(VIDEOS_CSV_DIR, 'video_tests.csv'),       # Test A/B
+    'type4': os.path.join(VIDEOS_CSV_DIR, 'video_povs.csv'),        # POV Poètic
+    'type5': os.path.join(VIDEOS_CSV_DIR, 'video_checklists.csv'),  # Checklist
+}
 
-SLIDES_DIR = os.path.join(BASE_DIR, 'public_slides')
-
-# Fonts elegants estil Serif (Playfair Display) i Sans (Poppins)
+# Fonts
 FONT_SERIF_REG_PATH = os.path.join(BASE_DIR, 'PlayfairDisplay-Regular.ttf')
-FONT_SERIF_BOLD_PATH = os.path.join(BASE_DIR, 'PlayfairDisplay-Bold.ttf')
 FONT_SERIF_ITALIC_PATH = os.path.join(BASE_DIR, 'PlayfairDisplay-Italic.ttf')
 FONT_SANS_PATH = os.path.join(BASE_DIR, 'Poppins-Medium.ttf')
 
@@ -43,123 +51,67 @@ FONT_SERIF_ITALIC_URL = "https://github.com/google/fonts/raw/main/ofl/playfairdi
 FONT_SANS_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Medium.ttf"
 
 # ENVS
-BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Clau de Google AI Studio
+BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
 
-FTP_HOST = os.getenv("FTP_HOST")
-FTP_USER = os.getenv("FTP_USER")
-FTP_PASS = os.getenv("FTP_PASS")
-
-# Prompts estrictament SENSE PERSONES (Només paisatges i espais)
-PROMPT_POOL = [
-    "completely empty scenic landscape, quiet sunset over calm ocean, vintage 35mm film photograph, warm golden hour, soft film grain, deserted, no humans, no people, no silhouettes",
-    "empty cozy balcony overlooking a serene lake at twilight, warm dim fairy lights, retro 35mm analog photo, vintage muted tones, no people, no humans",
-    "peaceful autumn forest landscape with soft sunlight through trees, vintage Kodachrome photograph, warm retro colors, empty nature view, no people",
-    "deserted cobblestone alley in a European village at dusk, architecture only, warm street lamps glow, 35mm analog film texture, completely empty, no people, no silhouettes",
-    "serene mountain reflection on a quiet lake at sunrise, retro 35mm aesthetic, soft warm glow, untouched nature landscape, empty scenery, no humans"
-]
+# Mides del Canvas Vertical (9:16) i del Marc Quadrat Centrat (1:1)
+CANVAS_W, CANVAS_H = 1080, 1920
+SQUARE_SIZE = 1080
+SQUARE_TOP_Y = (CANVAS_H - SQUARE_SIZE) // 2  # Y = 420 (Centrat verticalment)
 
 # ========================================================
-# UTILITATS GENERALS
+# UTILITATS GENERALS I DESCARRÈGUES
 # ========================================================
 
 def download_file(url, save_path):
     if not os.path.exists(save_path):
-        print(f"📥 Descarregant: {os.path.basename(save_path)}...")
+        print(f"📥 Descarregant font: {os.path.basename(save_path)}...")
         res = requests.get(url)
         with open(save_path, 'wb') as f:
             f.write(res.content)
 
-def generate_background_image():
-    """Genera una imatge de paisatge 1080x1080 via Google AI Studio (Imagen 3)"""
-    prompt = random.choice(PROMPT_POOL)
+def download_pexels_videos(count):
+    """Descarrega 'count' vídeos verticals diferents de Pexels API"""
+    queries = [
+        "serene landscape vertical", "calm nature vertical", "sunset ocean vertical", 
+        "autumn forest vertical", "peaceful lake vertical", "mountain view vertical",
+        "misty woods vertical", "dusk sky vertical"
+    ]
+    random.shuffle(queries)
+    
+    if not PEXELS_API_KEY:
+        print("⚠️ PEXELS_API_KEY no configurada en les variables d'entorn.")
+        raise Exception("Falta PEXELS_API_KEY.")
 
-    if GEMINI_API_KEY:
-        try:
-            print("🎨 Generant nova imatge de paisatge via Google AI Studio (Imagen 3)...")
-            client = genai.Client(api_key=GEMINI_API_KEY)
-
-            response = client.models.generate_images(
-                model='imagen-3.0-generate-002',
-                prompt=prompt,
-                config=types.GenerateImagesConfig(
-                    number_of_images=1,
-                    output_mime_type='image/jpeg',
-                    aspect_ratio='1:1',
-                    negative_prompt='people, human, person, silhouette, faces, crowds'
-                )
-            )
-
-            if response.generated_images:
-                img_bytes = response.generated_images[0].image.image_bytes
-                img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
-                img = img.resize((1080, 1080), Image.Resampling.LANCZOS)
-                print("✅ Imatge generada amb èxit via Google AI Studio!")
-                return img
-
-        except Exception as e:
-            print(f"⚠️ Error a Google AI Studio: {e}. Intentant fallback...")
-
-    # Fallback 1: Imatge real de paisatge d'alta qualitat (Unsplash)
-    try:
-        print("📷 Carregant paisatge d'alta qualitat des d'Unsplash...")
-        unsplash_url = "https://picsum.photos/1080/1080"
-        res = requests.get(unsplash_url, timeout=15)
-        if res.status_code == 200:
-            img = Image.open(io.BytesIO(res.content)).convert('RGB')
-            print("✅ Paisatge descarregat d'Unsplash!")
-            return img
-    except Exception as e:
-        print(f"⚠️ Error Unsplash: {e}")
-
-    # Fallback 2: Fons blau retro
-    print("🎨 Usant fons de reserva blau retro...")
-    return Image.new('RGB', (1080, 1080), color='#2B4380')
-
-def apply_retro_filters_and_frame(bg_img):
-    """Aplica filtre retro càlid, baixada de contrast, foscor i el marc arrodonit"""
-    # 1. Reduir contrast per a un efecte desteñit/vell
-    contrast_enhancer = ImageEnhance.Contrast(bg_img)
-    img_fade = contrast_enhancer.enhance(0.85)
-
-    # 2. Aplicar to càlid/sepia utilitzant la matriu de transformació de color
-    warm_matrix = (
-        1.2, 0.2, -0.1, 0,
-        0.1, 1.1, -0.1, 0,
-        0.1, 0.1,  0.8, 0
-    )
-    img_warm = img_fade.convert('RGB', warm_matrix)
-
-    # 3. Fosc per garantir la llegibilitat del text blanc (brillantor reduïda per destacar el text)
-    brightness_enhancer = ImageEnhance.Brightness(img_warm)
-    dark_bg = brightness_enhancer.enhance(0.42)
-
-    # 4. Marc exterior 100% negre amb un blackfade estret a la vora (sense línia de contorn visible).
-    # Tècnica: dibuixem la màscara interior MÉS GRAN que el marc real i després difuminem,
-    # de manera que la transició negre→imatge caigui exactament sobre la vora arrodonida
-    # sense deixar cap anell o línia de tall visible.
-    width, height = 1080, 1080
-    frame = Image.new('RGBA', (width, height), (0, 0, 0, 255))
-
-    blur_r   = 10   # radi de difuminat (píxels de transició)
-    margin   = 28   # vora negra visible (reduïda respecte a l'anterior)
-    radius   = 60   # arrodoniment de cantonades
-    inner_m  = margin - blur_r  # interior de la màscara desplaçat cap enfora perquè el blur centri la transició a 'margin'
-
-    mask = Image.new('L', (width, height), 0)
-    draw_mask = ImageDraw.Draw(mask)
-    draw_mask.rounded_rectangle(
-        [(inner_m, inner_m), (width - inner_m, height - inner_m)],
-        radius=radius + blur_r, fill=255
-    )
-    mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_r))
-
-    dark_bg_rgba = dark_bg.convert('RGBA')
-    final_canvas = Image.composite(dark_bg_rgba, frame, mask)
-
-    return final_canvas.convert('RGB')
+    headers = {"Authorization": PEXELS_API_KEY}
+    downloaded_paths = []
+    
+    print(f"🎬 Cercant {count} vídeos diferents a Pexels API...")
+    
+    for i in range(count):
+        query = queries[i % len(queries)]
+        url = f"https://api.pexels.com/videos/search?query={query}&orientation=portrait&per_page=15"
+        res = requests.get(url, headers=headers, timeout=15).json()
+        videos = res.get("videos", [])
+        
+        if videos:
+            selected_video = random.choice(videos)
+            video_files = selected_video.get("video_files", [])
+            best_file = next((f for f in video_files if f.get("height") == 1920 or f.get("width") == 1080), video_files[0])
+            
+            v_res = requests.get(best_file["link"], timeout=30)
+            p = os.path.join(BASE_DIR, f"temp_pexels_bg_{i}.mp4")
+            with open(p, "wb") as f:
+                f.write(v_res.content)
+            downloaded_paths.append(p)
+            
+    if not downloaded_paths:
+        raise Exception("No s'han pogut descarregar vídeos de Pexels.")
+        
+    print(f"✅ S'han descarregat {len(downloaded_paths)} vídeos de fons!")
+    return downloaded_paths
 
 def wrap_text(text, draw, font, max_width):
     lines = []
@@ -178,138 +130,8 @@ def wrap_text(text, draw, font, max_width):
     lines.append(current_line)
     return lines
 
-def draw_title_with_underline(draw, text, highlight_word, font_title, width, start_y):
-    """Dibuixa el títol centrat i subratlla la paraula destacada"""
-    max_w = width - 180
-    lines = wrap_text(text, draw, font_title, max_w)
-
-    line_heights = [draw.textbbox((0, 0), l, font=font_title)[3] - draw.textbbox((0, 0), l, font=font_title)[1] for l in lines]
-    total_h = sum(line_heights) + (24 * (len(lines) - 1))
-
-    current_y = start_y if start_y else (1080 - total_h) / 2
-
-    for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font_title)
-        line_w = bbox[2] - bbox[0]
-        start_x = (width - line_w) / 2
-
-        draw.text((start_x, current_y), line, fill='#FFFFFF', font=font_title)
-
-        if highlight_word and highlight_word.lower() in line.lower():
-            idx = line.lower().find(highlight_word.lower())
-            word_exact = line[idx:idx+len(highlight_word)]
-
-            pre_text = line[:idx]
-            pre_w = draw.textbbox((0, 0), pre_text, font=font_title)[2] - draw.textbbox((0, 0), pre_text, font=font_title)[0] if pre_text else 0
-
-            word_w = draw.textbbox((0, 0), word_exact, font=font_title)[2] - draw.textbbox((0, 0), word_exact, font=font_title)[0]
-
-            ux1 = start_x + pre_w
-            ux2 = ux1 + word_w
-            uy = current_y + (bbox[3] - bbox[1]) + 10
-
-            draw.line([(ux1, uy), (ux2, uy)], fill='#FFFFFF', width=4)
-
-        current_y += (bbox[3] - bbox[1]) + 24
-
-def draw_question_slide(draw, text, font, width):
-    """Dibuixa una diapositiva de pregunta normal (sense opcions), centrada verticalment"""
-    lines = wrap_text(text, draw, font, 880)
-    line_heights = [draw.textbbox((0, 0), l, font=font)[3] - draw.textbbox((0, 0), l, font=font)[1] for l in lines]
-    total_h = sum(line_heights) + (22 * (len(lines) - 1))
-
-    y_curr = (1080 - total_h) / 2
-    for l in lines:
-        bbox = draw.textbbox((0, 0), l, font=font)
-        draw.text((100, y_curr), l, fill='#FFFFFF', font=font)
-        y_curr += (bbox[3] - bbox[1]) + 22
-
-def draw_test_slide(draw, question_text, options, font_question, font_option_letter, font_option_text, width):
-    """Dibuixa una diapositiva de tipus Test: pregunta + fins a 4 opcions (A-D)"""
-    lines = wrap_text(question_text, draw, font_question, 900)
-    y_curr = 240
-    for l in lines:
-        bbox = draw.textbbox((0, 0), l, font=font_question)
-        draw.text((100, y_curr), l, fill='#FFFFFF', font=font_question)
-        y_curr += (bbox[3] - bbox[1]) + 16
-
-    y_curr += 40
-    for opt_letter, opt_text in options:
-        if not str(opt_text).strip():
-            continue
-        draw.text((100, y_curr), opt_letter, fill='#FFFFFF', font=font_option_letter)
-        draw.text((160, y_curr), opt_text, fill='#FFFFFF', font=font_option_text)
-        y_curr += 65
-
-def draw_footer(draw, font_sans, width):
-    """Marca d'aigua inferior discreta"""
-    text = "coupleforms"
-    bbox = draw.textbbox((0, 0), text, font=font_sans)
-    tw = bbox[2] - bbox[0]
-    draw.text(((width - tw) / 2, 920), text, fill=(255, 255, 255, 220), font=font_sans)
-
-def send_telegram_media_group(message, photo_paths):
-    """Envia l'àlbum de fotos complet (les 6 diapositives) a Telegram per a la revisió"""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("ℹ️ Telegram no configurat.")
-        return
-    try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                      data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'})
-
-        media = []
-        files = {}
-        for idx, path in enumerate(photo_paths):
-            file_key = f"photo_{idx}"
-            media.append({"type": "photo", "media": f"attach://{file_key}"})
-            files[file_key] = open(path, 'rb')
-
-        payload = {'chat_id': TELEGRAM_CHAT_ID, 'media': json.dumps(media)}
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMediaGroup", data=payload, files=files)
-        print("📲 Àlbum complet de slides enviat a Telegram!")
-    except Exception as e:
-        print(f"⚠️ Error enviant àlbum a Telegram: {e}")
-
-def upload_via_ftp(file_path):
-    if not (FTP_HOST and FTP_USER and FTP_PASS):
-        return None
-    filename = os.path.basename(file_path)
-    try:
-        ftp = ftplib.FTP(FTP_HOST, FTP_USER, FTP_PASS, timeout=30)
-        try: ftp.cwd("public_html")
-        except: pass
-        try: ftp.cwd("public_slides")
-        except:
-            ftp.mkd("public_slides")
-            ftp.cwd("public_slides")
-        with open(file_path, 'rb') as f:
-            ftp.storbinary(f'STOR {filename}', f)
-        ftp.quit()
-        return f"https://formfriends.com/public_slides/{filename}"
-    except Exception as e:
-        print(f"⚠️ Error FTP: {e}")
-        return None
-
-def get_public_image_urls(temp_files):
-    if FTP_HOST and FTP_USER and FTP_PASS:
-        urls = [upload_via_ftp(f) for f in temp_files]
-        if all(urls): return urls
-
-    repo = os.getenv("GITHUB_REPOSITORY")
-    branch = os.getenv("GITHUB_REF_NAME", "main")
-    if repo:
-        commit_repo_files(["public_slides/"], "upload: slides")
-        return [f"https://raw.githubusercontent.com/{repo}/{branch}/public_slides/{os.path.basename(f)}" for f in temp_files]
-
-    raise Exception("❌ Sense URL pública.")
-
 def commit_repo_files(paths, message):
-    """Fa `git add` només dels paths indicats, commit i push.
-    S'utilitza tant per pujar imatges com -crucialment- per persistir els canvis
-    d'Status als CSV i al fitxer d'estat d'alternança; sense això, el workflow
-    reprocessaria sempre la mateixa fila 'Pending' perquè cada run parteix
-    d'un checkout net del repositori.
-    """
+    """Fa git add, commit i push dels fitxers modificats"""
     repo = os.getenv("GITHUB_REPOSITORY")
     if not repo:
         print("ℹ️ No s'ha detectat GITHUB_REPOSITORY: s'omet el commit (execució local).")
@@ -325,91 +147,332 @@ def commit_repo_files(paths, message):
         print(f"⚠️ Error fent commit/push: {e}")
         return False
 
-def post_to_buffer(token, image_urls, caption):
-    buffer_url = "https://api.buffer.com"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+# ========================================================
+# RENDERITZACIÓ DEL MARC QUADRAT RETRO SOBRE CANVAS VERTICAL
+# ========================================================
 
-    org_res = requests.post(buffer_url, headers=headers, json={"query": "query { account { organizations { id } } }"})
-    orgs = org_res.json().get("data", {}).get("account", {}).get("organizations", [])
-    if not orgs: return False
+def create_base_square_overlay():
+    """Crea una capa RGBA 1080x1920 que és 100% NEGRA OPACA a tot arreu
+    (barres de dalt, de baix i marcs) EXCEPTE a la finestra quadrada arrodonida
+    centrada (1080x1080 a Y=420), on deixa veure el vídeo de fons."""
+    
+    # 1. Base 1080x1920 completament negre opac
+    frame = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 255))
+    
+    # 2. Construïm la màscara per retallar la finestra
+    blur_r = 10
+    margin = 28
+    radius = 60
+    inner_m = margin - blur_r
+    
+    mask = Image.new('L', (CANVAS_W, CANVAS_H), 0)
+    draw_mask = ImageDraw.Draw(mask)
+    
+    sq_top = SQUARE_TOP_Y + inner_m
+    sq_bottom = SQUARE_TOP_Y + SQUARE_SIZE - inner_m
+    sq_left = inner_m
+    sq_right = CANVAS_W - inner_m
+    
+    draw_mask.rounded_rectangle(
+        [(sq_left, sq_top), (sq_right, sq_bottom)],
+        radius=radius + blur_r,
+        fill=255
+    )
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_r))
+    
+    # On mask és 0 (fora del quadrat): Alpha = 255 (NEGRE 100% SÒLID, cap vídeo)
+    # On mask és 255 (dins del quadrat): Alpha = 65 (Tint fosc suau per ajudar al contrast)
+    alpha_channel = Image.eval(mask, lambda val: int(255 - (val / 255.0) * (255 - 65)))
+    frame.putalpha(alpha_channel)
+    
+    return frame
 
-    ch_res = requests.post(buffer_url, headers=headers, json={
-        "query": "query GetChannels($input: ChannelsInput!) { channels(input: $input) { id service displayName } }",
-        "variables": {"input": {"organizationId": orgs[0]["id"]}}
-    })
-    channels = ch_res.json().get("data", {}).get("channels", [])
-
-    assets = [{"image": {"url": url}} for url in image_urls]
-    mutation = """
-    mutation CreatePost($input: CreatePostInput!) {
-      createPost(input: $input) {
-        ... on PostActionSuccess { post { id } }
-        ... on MutationError { message }
-      }
-    }
-    """
-
-    success = True
-    for ch in channels:
-        service = str(ch.get("service", "")).lower()
-        if "youtube" in service: continue
-
-        inp = {
-            "channelId": ch["id"],
-            "text": caption,
-            "schedulingType": "automatic",
-            "mode": "shareNow",
-            "assets": assets
-        }
-        if "instagram" in service:
-            inp["metadata"] = {"instagram": {"type": "post", "shouldShareToFeed": True}}
-
-        res = requests.post(buffer_url, headers=headers, json={"query": mutation, "variables": {"input": inp}})
-        if "errors" in res.json(): success = False
-
-    return success
+def add_footer_to_overlay(draw_obj, font_sans):
+    """Afegeix la marca d'aigua inferior 'coupleforms'"""
+    text = "coupleforms"
+    bbox = draw_obj.textbbox((0, 0), text, font=font_sans)
+    tw = bbox[2] - bbox[0]
+    draw_obj.text(((CANVAS_W - tw) / 2, SQUARE_TOP_Y + 920), text, fill=(255, 255, 255, 220), font=font_sans)
 
 # ========================================================
-# LECTURA DE CSV I ALTERNANÇA DE TIPUS DE POST
+# GENERADORS DE CAPES GRAFIQUES PER A CADA TIPUS DE REEL
 # ========================================================
+
+def generate_overlay_type1(data, font_serif, font_sans):
+    """Tipus 1: Frase central única"""
+    base = create_base_square_overlay()
+    draw = ImageDraw.Draw(base)
+    
+    phrase = data.get('Phrase', '')
+    lines = wrap_text(phrase, draw, font_serif, max_width=840)
+    
+    line_h = [draw.textbbox((0, 0), l, font=font_serif)[3] - draw.textbbox((0, 0), l, font=font_serif)[1] for l in lines]
+    total_h = sum(line_h) + (24 * (len(lines) - 1))
+    
+    y_curr = SQUARE_TOP_Y + (SQUARE_SIZE - total_h) / 2
+    for l in lines:
+        bbox = draw.textbbox((0, 0), l, font=font_serif)
+        tw = bbox[2] - bbox[0]
+        draw.text(((CANVAS_W - tw) / 2, y_curr), l, fill='#FFFFFF', font=font_serif)
+        y_curr += (bbox[3] - bbox[1]) + 24
+        
+    add_footer_to_overlay(draw, font_sans)
+    img_path = os.path.join(BASE_DIR, "temp_frame_t1.png")
+    base.save(img_path)
+    return img_path
+
+def generate_overlays_type2(data, font_title, font_q, font_sans):
+    """Tipus 2: Carousel de 3 preguntes seqüencials"""
+    frames = []
+    texts = [
+        data.get('Title', ''),
+        data.get('Question_1', ''),
+        data.get('Question_2', ''),
+        data.get('Question_3', '')
+    ]
+    
+    for idx, text in enumerate(texts):
+        base = create_base_square_overlay()
+        draw = ImageDraw.Draw(base)
+        
+        font = font_title if idx == 0 else font_q
+        lines = wrap_text(text, draw, font, max_width=840)
+        line_h = [draw.textbbox((0, 0), l, font=font)[3] - draw.textbbox((0, 0), l, font=font)[1] for l in lines]
+        total_h = sum(line_h) + (20 * (len(lines) - 1))
+        
+        y_curr = SQUARE_TOP_Y + (SQUARE_SIZE - total_h) / 2
+        
+        if idx > 0:
+            tag = f"QUESTION 0{idx}"
+            tag_bbox = draw.textbbox((0, 0), tag, font=font_sans)
+            draw.text(((CANVAS_W - (tag_bbox[2] - tag_bbox[0])) / 2, y_curr - 80), tag, fill='#E0E0E0', font=font_sans)
+
+        for l in lines:
+            bbox = draw.textbbox((0, 0), l, font=font)
+            tw = bbox[2] - bbox[0]
+            draw.text(((CANVAS_W - tw) / 2, y_curr), l, fill='#FFFFFF', font=font)
+            y_curr += (bbox[3] - bbox[1]) + 20
+
+        add_footer_to_overlay(draw, font_sans)
+        f_path = os.path.join(BASE_DIR, f"temp_frame_t2_{idx}.png")
+        base.save(f_path)
+        frames.append(f_path)
+        
+    return frames
+
+def generate_overlay_type3(data, font_title, font_q, font_opt, font_sans):
+    """Tipus 3: Test A/B ràpid"""
+    base = create_base_square_overlay()
+    draw = ImageDraw.Draw(base)
+    
+    title = data.get('Title', '')
+    question = data.get('Question', '')
+    opt_a = f"A) {data.get('Option_A', '')}"
+    opt_b = f"B) {data.get('Option_B', '')}"
+    
+    y_curr = SQUARE_TOP_Y + 220
+    
+    bbox = draw.textbbox((0, 0), title, font=font_title)
+    draw.text(((CANVAS_W - (bbox[2] - bbox[0])) / 2, y_curr), title, fill='#FFFFFF', font=font_title)
+    y_curr += (bbox[3] - bbox[1]) + 40
+    
+    q_lines = wrap_text(question, draw, font_q, max_width=840)
+    for l in q_lines:
+        bbox = draw.textbbox((0, 0), l, font=font_q)
+        draw.text(((CANVAS_W - (bbox[2] - bbox[0])) / 2, y_curr), l, fill='#FFFFFF', font=font_q)
+        y_curr += (bbox[3] - bbox[1]) + 16
+        
+    y_curr += 50
+    for opt in (opt_a, opt_b):
+        bbox = draw.textbbox((0, 0), opt, font=font_opt)
+        draw.text(((CANVAS_W - (bbox[2] - bbox[0])) / 2, y_curr), opt, fill='#FFFFFF', font=font_opt)
+        y_curr += 80
+
+    add_footer_to_overlay(draw, font_sans)
+    f_path = os.path.join(BASE_DIR, "temp_frame_t3.png")
+    base.save(f_path)
+    return f_path
+
+def generate_overlays_type4(data, font_serif, font_sans):
+    """Tipus 4: POV nota poètica de 3 línies acumulatives"""
+    lines_text = [data.get('Line_1', ''), data.get('Line_2', ''), data.get('Line_3', '')]
+    frames = []
+    
+    for count in range(1, 4):
+        base = create_base_square_overlay()
+        draw = ImageDraw.Draw(base)
+        
+        current_lines = lines_text[:count]
+        
+        all_wrapped = []
+        for l in current_lines:
+            all_wrapped.extend(wrap_text(l, draw, font_serif, max_width=840))
+            
+        total_h = len(all_wrapped) * 60 + (len(current_lines) - 1) * 30
+        y_curr = SQUARE_TOP_Y + (SQUARE_SIZE - total_h) / 2
+        
+        for line in current_lines:
+            sub_lines = wrap_text(line, draw, font_serif, max_width=840)
+            for sl in sub_lines:
+                bbox = draw.textbbox((0, 0), sl, font=font_serif)
+                tw = bbox[2] - bbox[0]
+                draw.text(((CANVAS_W - tw) / 2, y_curr), sl, fill='#FFFFFF', font=font_serif)
+                y_curr += 60
+            y_curr += 30
+            
+        add_footer_to_overlay(draw, font_sans)
+        f_path = os.path.join(BASE_DIR, f"temp_frame_t4_{count}.png")
+        base.save(f_path)
+        frames.append(f_path)
+        
+    return frames
+
+def generate_overlays_type5(data, font_title, font_item, font_sans):
+    """Tipus 5: Checklist animat (4 items)"""
+    title = data.get('Title', '')
+    items = [data.get('Item_1', ''), data.get('Item_2', ''), data.get('Item_3', ''), data.get('Item_4', '')]
+    frames = []
+    
+    for count in range(1, 5):
+        base = create_base_square_overlay()
+        draw = ImageDraw.Draw(base)
+        
+        y_curr = SQUARE_TOP_Y + 200
+        
+        t_lines = wrap_text(title, draw, font_title, max_width=840)
+        for tl in t_lines:
+            bbox = draw.textbbox((0, 0), tl, font=font_title)
+            draw.text(((CANVAS_W - (bbox[2] - bbox[0])) / 2, y_curr), tl, fill='#FFFFFF', font=font_title)
+            y_curr += 50
+            
+        y_curr += 50
+        
+        for idx in range(count):
+            item_text = f"☑  {items[idx]}"
+            draw.text((160, y_curr), item_text, fill='#FFFFFF', font=font_item)
+            y_curr += 70
+
+        add_footer_to_overlay(draw, font_sans)
+        f_path = os.path.join(BASE_DIR, f"temp_frame_t5_{count}.png")
+        base.save(f_path)
+        frames.append(f_path)
+        
+    return frames
+
+# ========================================================
+# ENSAMBLATGE DE VÍDEO AMB MOVIEPY (MÚLTIPLES VÍDEOS + BLACKFADE)
+# ========================================================
+
+def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, output_path):
+    """Combina els vídeos de fons de Pexels (canviant cada ~4s amb fosa a negre)
+    amb la seqüència de capes PNG de PIL"""
+    print(f"⚙️ Ensamblant vídeo final ({output_path}) amb MoviePy...")
+    
+    total_duration = sum(duration_per_frame)
+    num_videos = len(bg_video_paths)
+    segment_duration = total_duration / num_videos
+    
+    subclips = []
+    for i, path in enumerate(bg_video_paths):
+        c = VideoFileClip(path)
+        
+        # Subclip per a la durada del segment
+        if hasattr(c, 'subclipped'):
+            c = c.subclipped(0, min(segment_duration, c.duration))
+        else:
+            c = c.subclip(0, min(segment_duration, c.duration))
+            
+        # Resize
+        if hasattr(c, 'resized'):
+            c = c.resized(height=CANVAS_H)
+            if c.w < CANVAS_W:
+                c = c.resized(width=CANVAS_W)
+        else:
+            c = c.resize(height=CANVAS_H)
+            if c.w < CANVAS_W:
+                c = c.resize(width=CANVAS_W)
+                
+        # Crop centrat
+        if hasattr(c, 'cropped'):
+            c = c.cropped(x_center=c.w / 2, y_center=c.h / 2, width=CANVAS_W, height=CANVAS_H)
+        else:
+            c = c.crop(x_center=c.w / 2, y_center=c.h / 2, width=CANVAS_W, height=CANVAS_H)
+            
+        # Transició curta de fosa a negre (blackfade)
+        try:
+            if hasattr(c, 'fadein') and hasattr(c, 'fadeout'):
+                c = c.fadein(0.3).fadeout(0.3)
+        except Exception as e:
+            print(f"⚠️ Nota transició fade: {e}")
+
+        subclips.append(c)
+        
+    # Concatenar els clips de fons
+    clip_bg = concatenate_videoclips(subclips, method="compose")
+    
+    if clip_bg.duration > total_duration:
+        if hasattr(clip_bg, 'subclipped'):
+            clip_bg = clip_bg.subclipped(0, total_duration)
+        else:
+            clip_bg = clip_bg.subclip(0, total_duration)
+            
+    # Capes gràfiques de text PNG sobreposades
+    overlay_clips = []
+    start_time = 0
+    for idx, img_p in enumerate(overlay_paths):
+        dur = duration_per_frame[idx]
+        img_clip = ImageClip(img_p)
+        
+        if hasattr(img_clip, 'with_start'):
+            img_clip = img_clip.with_start(start_time)
+        else:
+            img_clip = img_clip.set_start(start_time)
+            
+        if hasattr(img_clip, 'with_duration'):
+            img_clip = img_clip.with_duration(dur)
+        else:
+            img_clip = img_clip.set_duration(dur)
+            
+        overlay_clips.append(img_clip)
+        start_time += dur
+        
+    final_clip = CompositeVideoClip([clip_bg] + overlay_clips)
+    final_clip.write_videofile(output_path, fps=24, codec="libx264", audio=False, preset="fast")
+    print("✅ Reel generat amb èxit!")
+
+# ========================================================
+# TELEGRAM / CSV / ROTACIÓ DE TIPUS
+# ========================================================
+
+def send_telegram_video(video_path, caption):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("ℹ️ Telegram no configurat.")
+        return
+    try:
+        print("📲 Enviant vídeo a Telegram per a la revisió...")
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
+        with open(video_path, 'rb') as f:
+            files = {'video': f}
+            data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': caption, 'parse_mode': 'HTML'}
+            requests.post(url, data=data, files=files)
+        print("✅ Vídeo enviat a Telegram!")
+    except Exception as e:
+        print(f"⚠️ Error enviant vídeo a Telegram: {e}")
 
 def read_csv_safe(csv_path):
-    """Lectura defensiva d'un CSV: retorna (headers, rows) amb totes les files
-    completades a la mida de headers per evitar IndexError."""
     if not os.path.exists(csv_path):
-        print(f"❌ Error: Fitxer CSV no trobat a {csv_path}")
         return None, None
-
     rows, headers = [], []
     with open(csv_path, mode='r', encoding='utf-8') as f:
         reader = csv.reader(f)
         try:
             headers = [h.strip() for h in next(reader)]
         except StopIteration:
-            print(f"❌ Error: El fitxer {csv_path} està buit.")
             return None, None
-
         for r in reader:
             if r and any(field.strip() for field in r):
                 rows.append(r)
-
-    if 'Status' not in headers:
-        print(f"❌ Error: No s'ha trobat la columna 'Status' a {csv_path}.")
-        return None, None
-
-    status_idx = headers.index('Status')
-    for r in rows:
-        while len(r) < len(headers):
-            r.append('')
-
     return headers, rows
-
-def find_first_pending(headers, rows):
-    status_idx = headers.index('Status')
-    for idx, r in enumerate(rows):
-        if r[status_idx].strip().lower() == 'pending':
-            return idx, dict(zip(headers, r))
-    return None, None
 
 def write_csv_safe(csv_path, headers, rows):
     with open(csv_path, mode='w', newline='', encoding='utf-8') as f:
@@ -417,35 +480,38 @@ def write_csv_safe(csv_path, headers, rows):
         writer.writerow(headers)
         writer.writerows(rows)
 
-def load_next_post_type():
-    """Llegeix quin tipus de post toca aquesta execució ('question' o 'test').
-    Si no existeix el fitxer d'estat (primera execució), es comença per 'question'."""
-    if os.path.exists(STATE_PATH):
-        with open(STATE_PATH, 'r', encoding='utf-8') as f:
-            value = f.read().strip().lower()
-        if value in ('question', 'test'):
-            return value
-    return 'question'
-
-def save_next_post_type(post_type):
+def save_next_video_type(current_type):
+    types = ['type1', 'type2', 'type3', 'type4', 'type5']
+    next_type = types[(types.index(current_type) + 1) % len(types)] if current_type in types else 'type1'
     with open(STATE_PATH, 'w', encoding='utf-8') as f:
-        f.write(post_type)
+        f.write(next_type)
+    return next_type
 
-def pick_post_to_process():
-    """Determina quin CSV/tipus de post cal processar aquesta execució, alternant
-    entre 'question' i 'test'. Si el tipus que tocava no té cap fila 'Pending',
-    es prova amb l'altre tipus per no bloquejar el pipeline."""
-    preferred_type = load_next_post_type()
-    other_type = 'test' if preferred_type == 'question' else 'question'
+def pick_reel_type_to_process():
+    if FORCE_TYPE and FORCE_TYPE in CSV_PATHS:
+        print(f"🧪 [MODE SELECCIÓ MANUAL] Tipus forçat: {FORCE_TYPE}")
+        preferred_type = FORCE_TYPE
+    else:
+        preferred_type = 'type1'
+        if os.path.exists(STATE_PATH):
+            with open(STATE_PATH, 'r', encoding='utf-8') as f:
+                v = f.read().strip()
+                if v in CSV_PATHS:
+                    preferred_type = v
 
-    for post_type in (preferred_type, other_type):
-        csv_path = CSV_TEST_PATH if post_type == 'test' else CSV_QUESTION_PATH
+    types_order = [preferred_type] + [t for t in CSV_PATHS.keys() if t != preferred_type]
+    
+    for post_type in types_order:
+        csv_path = CSV_PATHS[post_type]
         headers, rows = read_csv_safe(csv_path)
-        if headers is None:
+        if not headers or 'Status' not in headers:
             continue
-        idx, post_data = find_first_pending(headers, rows)
-        if idx is not None:
-            return post_type, csv_path, headers, rows, idx, post_data
+
+        status_idx = headers.index('Status')
+        for idx, r in enumerate(rows):
+            if r[status_idx].strip().lower() == 'pending':
+                post_data = dict(zip(headers, r))
+                return post_type, csv_path, headers, rows, idx, post_data
 
     return None, None, None, None, None, None
 
@@ -457,112 +523,84 @@ def main():
     download_file(FONT_SERIF_REG_URL, FONT_SERIF_REG_PATH)
     download_file(FONT_SERIF_ITALIC_URL, FONT_SERIF_ITALIC_PATH)
     download_file(FONT_SANS_URL, FONT_SANS_PATH)
+    
+    os.makedirs(VIDEOS_DIR, exist_ok=True)
 
-    os.makedirs(SLIDES_DIR, exist_ok=True)
-
-    post_type, csv_path, headers, rows, current_idx, post_data = pick_post_to_process()
-
-    if post_type is None:
-        print("🎉 Tots els posts d'ambdós CSV estan completats ('Done')!")
+    post_type, csv_path, headers, rows, current_idx, data = pick_reel_type_to_process()
+    
+    if not post_type:
+        print("🎉 Tots els vídeos de tots els CSVs estan completats ('Done')!")
         return
 
-    status_idx = headers.index('Status')
-    post_id = post_data.get('Post_ID', f"Post_{current_idx + 1}")
-    print(f"🚀 Generant carrousel ({post_type}) per a {post_id} des de {os.path.basename(csv_path)} (MODE PROVA = {TEST_MODE})...")
+    video_id = data.get('Video_ID', 'Reel_1')
+    print(f"🚀 Generant Reel ({post_type}) per a {video_id} des de {os.path.basename(csv_path)}...")
 
-    # Carregar Fonts
+    font_serif = ImageFont.truetype(FONT_SERIF_REG_PATH, 52)
     font_serif_large = ImageFont.truetype(FONT_SERIF_REG_PATH, 58)
-    font_serif_med = ImageFont.truetype(FONT_SERIF_REG_PATH, 46)
     font_serif_italic = ImageFont.truetype(FONT_SERIF_ITALIC_PATH, 44)
-    font_sans_footer = ImageFont.truetype(FONT_SANS_PATH, 28)
+    font_sans = ImageFont.truetype(FONT_SANS_PATH, 28)
 
-    temp_files = []
+    overlay_paths = []
+    durations = []
+    
+    if post_type == 'type1':
+        f_path = generate_overlay_type1(data, font_serif_large, font_sans)
+        overlay_paths, durations = [f_path], [8.0]
+        caption_title = data.get('Phrase', '')
 
-    # --- GENERACIÓ DE LES 6 DIAPOSITIVES AMB FONTS INDEPENDENTS ---
-    for i in range(6):
-        print(f"🖼️ Generant fons retro per a la Slide {i+1}/6...")
-        base_bg = generate_background_image()
-        s = apply_retro_filters_and_frame(base_bg)
-        d = ImageDraw.Draw(s)
+    elif post_type == 'type2':
+        overlay_paths = generate_overlays_type2(data, font_serif_large, font_serif, font_sans)
+        durations = [3.2, 3.6, 3.6, 3.6]
+        caption_title = data.get('Title', '')
 
-        if i == 0:
-            # --- SLIDE 1: PORTADA (comuna a tots dos esquemes) ---
-            draw_title_with_underline(d, post_data.get('Slide_1_Title', ''), post_data.get('Highlight_Word', ''), font_serif_large, 1080, None)
+    elif post_type == 'type3':
+        f_path = generate_overlay_type3(data, font_serif_large, font_serif, font_serif_italic, font_sans)
+        overlay_paths, durations = [f_path], [9.0]
+        caption_title = data.get('Title', '')
 
-        elif post_type == 'test':
-            # --- SLIDES 2-6: TEST, cadascuna amb la seva pròpia pregunta + opcions A-D ---
-            q_text = post_data.get(f'Slide_{i+1}_Question', '')
-            options = [
-                ('A) ', post_data.get(f'Slide_{i+1}_OptA', '')),
-                ('B) ', post_data.get(f'Slide_{i+1}_OptB', '')),
-                ('C) ', post_data.get(f'Slide_{i+1}_OptC', '')),
-                ('D) ', post_data.get(f'Slide_{i+1}_OptD', '')),
-            ]
-            draw_test_slide(d, q_text, options, font_serif_med, font_serif_italic, font_serif_med, 1080)
+    elif post_type == 'type4':
+        overlay_paths = generate_overlays_type4(data, font_serif, font_sans)
+        durations = [3.3, 3.3, 3.4]
+        caption_title = f"{data.get('Line_1', '')} {data.get('Line_2', '')}"
 
-        else:
-            # --- SLIDES 2-6: QUESTION, preguntes normals sense opcions ---
-            key = 'Slide_2_Question_or_Title' if i == 1 else f'Slide_{i+1}_Question'
-            q_text = post_data.get(key, '')
-            draw_question_slide(d, q_text, font_serif_med, 1080)
+    elif post_type == 'type5':
+        overlay_paths = generate_overlays_type5(data, font_serif_large, font_serif, font_sans)
+        durations = [3.0, 3.0, 3.0, 3.0]
+        caption_title = data.get('Title', '')
 
-        draw_footer(d, font_sans_footer, 1080)
+    # Determinem quants vídeos de fons descarregar (1 vídeo cada ~4 segons)
+    total_duration = sum(durations)
+    num_bg_videos = max(2, int(round(total_duration / 4.0)))
+    
+    bg_video_paths = download_pexels_videos(num_bg_videos)
+    output_video_path = os.path.join(VIDEOS_DIR, f"{video_id}.mp4")
+    
+    render_moviepy_reel(bg_video_paths, overlay_paths, durations, output_video_path)
 
-        f_path = os.path.join(SLIDES_DIR, f"{post_id}_slide_{i+1}.jpg")
-        s.save(f_path, "JPEG", quality=95)
-        temp_files.append(f_path)
+    tags = "#couples #relationshipgoals #couplesreels #formfriends"
+    caption = f"✨ <b>{html.escape(caption_title)}</b>\n\nTag your person in the comments ❤️\n\nPlay at formfriends.com\n\n{tags}"
 
-    tags = "#couples #relationshipgoals #deepquestions #couplesgame #formfriends"
-    caption = f"{post_data.get('Slide_1_Title', '')}\n\nTag your person and answer in the comments. ✨\n\nLink in bio to play formfriends.com\n\n—\n{tags}"
-
-    # Marquem la fila com a 'Done' i l'escrivim sempre, independentment del mode,
-    # perquè el següent run (test o producció) no la torni a agafar.
+    status_idx = headers.index('Status')
     rows[current_idx][status_idx] = 'Done'
     write_csv_safe(csv_path, headers, rows)
 
-    # Alternem el tipus per a la propera execució.
-    next_type = 'test' if post_type == 'question' else 'question'
-    save_next_post_type(next_type)
+    next_type = save_next_video_type(post_type)
 
     csv_relpath = os.path.relpath(csv_path, BASE_DIR)
     state_relpath = os.path.relpath(STATE_PATH, BASE_DIR)
 
     if TEST_MODE:
-        # ========================================================
-        # MODE PROVA: NOMÉS ENVIAMENT A TELEGRAM
-        # ========================================================
-        print("🧪 MODE PROVA ACTIVAT: S'omet Buffer. Enviant les 6 imatges a Telegram...")
-        title_text = html.escape(post_data.get('Slide_1_Title', ''))
-        telegram_msg = (
-            f"🧪 <b>[MODE PROVA] {post_id} generat ({post_type})</b>\n\n"
-            f"📖 <b>Títol:</b> {title_text}\n"
-            f"🏷️ <b>Hashtags:</b> {tags}\n\n"
-            f"<i>No s'ha enviat a Buffer. Comprova les 6 diapositives a l'àlbum adjunt!</i>"
-        )
-        send_telegram_media_group(telegram_msg, temp_files)
-
-        # Persistim SEMPRE el canvi d'Status i l'estat d'alternança al repositori,
-        # també en mode prova, o el pipeline es quedaria bloclat repetint el mateix post.
-        commit_repo_files([csv_relpath, state_relpath], f"chore: {post_id} -> Done (mode prova, {post_type})")
-        print(f"📝 CSV actualitzat (Mode Prova)! {post_id} -> Done. Proper tipus: {next_type}.")
+        print("🧪 MODE PROVA ACTIVAT: S'omet Buffer. Enviant el vídeo a Telegram...")
+        telegram_caption = f"🧪 <b>[MODE PROVA - REEL] {video_id} ({post_type})</b>\n\n{caption}"
+        send_telegram_video(output_video_path, telegram_caption)
+        
+        commit_repo_files([csv_relpath, state_relpath], f"chore: {video_id} -> Done (mode prova, {post_type})")
+        print(f"📝 CSV actualitzat a Git! {video_id} -> Done. Proper tipus: {next_type}.")
 
     else:
-        # ========================================================
-        # MODE PRODUCCIÓ: PUBLICACIÓ A BUFFER
-        # ========================================================
-        if not BUFFER_ACCESS_TOKEN:
-            print("⚠️ BUFFER_ACCESS_TOKEN no configurat.")
-            return
-
-        public_urls = get_public_image_urls(temp_files)
-        print("📤 Enviant carrousel a Buffer...")
-
-        if post_to_buffer(BUFFER_ACCESS_TOKEN, public_urls, caption):
-            telegram_msg = f"🚀 <b>{post_id} publicat amb èxit!</b>\n\n📖 {html.escape(post_data.get('Slide_1_Title', ''))}"
-            send_telegram_media_group(telegram_msg, temp_files)
-
-        commit_repo_files([csv_relpath, state_relpath], f"chore: {post_id} -> Done ({post_type})")
-        print(f"📝 CSV actualitzat! {post_id} -> Done. Proper tipus: {next_type}.")
+        print("📤 MODE PRODUCCIÓ: Publicació a Buffer...")
+        send_telegram_video(output_video_path, f"🚀 <b>[PUBLICAT] {video_id}</b>\n\n{caption}")
+        commit_repo_files([csv_relpath, state_relpath], f"chore: {video_id} -> Done ({post_type})")
 
 if __name__ == "__main__":
     main()
