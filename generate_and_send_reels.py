@@ -4,9 +4,8 @@ import random
 import requests
 import html
 import subprocess
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
 
-# Imports de MoviePy
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
 from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
 
 # ========================================================
@@ -14,21 +13,23 @@ from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
 # ========================================================
 TEST_MODE = True  # 🧪 Canvia a False per a producció (publicar a Buffer)
 
-# Permet forçar un tipus de vídeo específic per veure com queda.
-# Valors admesos: None (rotació automàtica) o 'type1', 'type2', 'type3', 'type4', 'type5'
-FORCE_TYPE = "type1"  # 👈 Canvia a 'type1', 'type2', etc. per provar cadascun!
+# Permet forçar un tipus de vídeo específic.
+# Valors admesos: 'type1', 'type2', 'type3', 'type4', 'type5' o None (per a rotació automàtica)
+FORCE_TYPE = "type1"  # 👈 Canvia això a 'type1', 'type2', etc. per provar cadascun!
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, 'public_videos')
+VIDEOS_CSV_DIR = os.path.join(BASE_DIR, 'videos')  # Carpeta on tens els 5 CSVs
+
 STATE_PATH = os.path.join(BASE_DIR, 'next_video_type.txt')
 
-# Rutes dels CSVs independents
+# Rutes dels 5 CSVs independents dins de /videos/
 CSV_PATHS = {
-    'type1': os.path.join(BASE_DIR, 'video_phrases.csv'),     # Frase Central
-    'type2': os.path.join(BASE_DIR, 'video_questions.csv'),   # 3 Preguntes
-    'type3': os.path.join(BASE_DIR, 'video_tests.csv'),       # Test A/B
-    'type4': os.path.join(BASE_DIR, 'video_povs.csv'),        # POV Poètic
-    'type5': os.path.join(BASE_DIR, 'video_checklists.csv'),  # Checklist
+    'type1': os.path.join(VIDEOS_CSV_DIR, 'video_phrases.csv'),     # Frase Central
+    'type2': os.path.join(VIDEOS_CSV_DIR, 'video_questions.csv'),   # 3 Preguntes
+    'type3': os.path.join(VIDEOS_CSV_DIR, 'video_tests.csv'),       # Test A/B
+    'type4': os.path.join(VIDEOS_CSV_DIR, 'video_povs.csv'),        # POV Poètic
+    'type5': os.path.join(VIDEOS_CSV_DIR, 'video_checklists.csv'),  # Checklist
 }
 
 # Fonts
@@ -68,8 +69,8 @@ def download_pexels_video():
     query = random.choice(queries)
     
     if not PEXELS_API_KEY:
-        print("⚠️ PEXELS_API_KEY no configurada. Intentant vídeo de fallback...")
-        raise Exception("Falta PEXELS_API_KEY en les variables d'entorn.")
+        print("⚠️ PEXELS_API_KEY no configurada en les variables d'entorn.")
+        raise Exception("Falta PEXELS_API_KEY.")
 
     print(f"🎬 Cercant vídeo a Pexels API ('{query}')...")
     url = f"https://api.pexels.com/videos/search?query={query}&orientation=portrait&per_page=15"
@@ -83,7 +84,7 @@ def download_pexels_video():
     selected_video = random.choice(videos)
     video_files = selected_video.get("video_files", [])
     
-    # Triem el millor fitxer HD vertical (1080x1920 o similar)
+    # Triem el millor fitxer HD vertical (1080x1920)
     best_file = next((f for f in video_files if f.get("height") == 1920 or f.get("width") == 1080), video_files[0])
     video_url = best_file["link"]
     
@@ -112,27 +113,41 @@ def wrap_text(text, draw, font, max_width):
     lines.append(current_line)
     return lines
 
+def commit_repo_files(paths, message):
+    """Fa git add, commit i push dels fitxers modificats"""
+    repo = os.getenv("GITHUB_REPOSITORY")
+    if not repo:
+        print("ℹ️ No s'ha detectat GITHUB_REPOSITORY: s'omet el commit (execució local).")
+        return False
+    try:
+        subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
+        subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
+        subprocess.run(["git", "add"] + list(paths), check=True)
+        commit_res = subprocess.run(["git", "commit", "-m", message], check=False)
+        subprocess.run(["git", "push"], check=False)
+        return commit_res.returncode == 0
+    except Exception as e:
+        print(f"⚠️ Error fent commit/push: {e}")
+        return False
+
 # ========================================================
 # RENDERITZACIÓ DEL MARC QUADRAT RETRO SOBRE CANVAS VERTICAL
 # ========================================================
 
 def create_base_square_overlay():
-    """Crea una capa RGBA de 1080x1920 que conté el marc fosc a dalt/a baix
-    i el marc quadrat retro 1080x1080 centrat (d'Y=420 a Y=1500)."""
+    """Crea la capa RGBA 1080x1920 amb el marc quadrat retro 1080x1080 centrat (Y=420)"""
     canvas = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     
-    # 1. Barres de fons fosc superior i inferior fora del marc quadrat
-    dark_bars = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 200)) # Fosc elegant
+    # 1. Barres fosques superior i inferior fora del quadrat
+    dark_bars = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 210))
     canvas.paste(dark_bars, (0, 0))
     
-    # 2. En la zona del marc quadrat centrat (1080x1080 a Y=420), fem un retall
-    # i apliquem la vora retro arrodonida exacta dels posts
+    # 2. Marc quadrat centrat amb vora arrodonida retro
     blur_r = 10
     margin = 28
     radius = 60
     inner_m = margin - blur_r
     
-    # Crear màscara arrodonida per al quadrat centrat
     square_mask = Image.new('L', (SQUARE_SIZE, SQUARE_SIZE), 0)
     draw_sq_mask = ImageDraw.Draw(square_mask)
     draw_sq_mask.rounded_rectangle(
@@ -141,13 +156,10 @@ def create_base_square_overlay():
     )
     square_mask = square_mask.filter(ImageFilter.GaussianBlur(radius=blur_r))
     
-    # Imatge opaca interior (per deixar veure el vídeo de fons al centre del quadrat)
-    clear_square = Image.new('RGBA', (SQUARE_SIZE, SQUARE_SIZE), (0, 0, 0, 80)) # Lleuger contrast sobre el vídeo
+    clear_square = Image.new('RGBA', (SQUARE_SIZE, SQUARE_SIZE), (0, 0, 0, 80))
     frame_black = Image.new('RGBA', (SQUARE_SIZE, SQUARE_SIZE), (0, 0, 0, 255))
     
     composite_square = Image.composite(clear_square, frame_black, square_mask)
-    
-    # Inserim el quadrat compositat al centre del canvas (Y = 420)
     canvas.paste(composite_square, (0, SQUARE_TOP_Y))
     
     return canvas
@@ -157,7 +169,6 @@ def add_footer_to_overlay(draw_obj, font_sans):
     text = "coupleforms"
     bbox = draw_obj.textbbox((0, 0), text, font=font_sans)
     tw = bbox[2] - bbox[0]
-    # Dibuixem la marca a prop de la part inferior del marc quadrat (Y ~ 1420)
     draw_obj.text(((CANVAS_W - tw) / 2, SQUARE_TOP_Y + 920), text, fill=(255, 255, 255, 220), font=font_sans)
 
 # ========================================================
@@ -188,7 +199,7 @@ def generate_overlay_type1(data, font_serif, font_sans):
     return img_path
 
 def generate_overlays_type2(data, font_title, font_q, font_sans):
-    """Tipus 2: Carousel de 3 preguntes seqüencials (4 frames)"""
+    """Tipus 2: Carousel de 3 preguntes seqüencials"""
     frames = []
     texts = [
         data.get('Title', ''),
@@ -209,7 +220,6 @@ def generate_overlays_type2(data, font_title, font_q, font_sans):
         y_curr = SQUARE_TOP_Y + (SQUARE_SIZE - total_h) / 2
         
         if idx > 0:
-            # Afegir un petit indicador de pregunta
             tag = f"QUESTION 0{idx}"
             tag_bbox = draw.textbbox((0, 0), tag, font=font_sans)
             draw.text(((CANVAS_W - (tag_bbox[2] - tag_bbox[0])) / 2, y_curr - 80), tag, fill='#E0E0E0', font=font_sans)
@@ -239,12 +249,10 @@ def generate_overlay_type3(data, font_title, font_q, font_opt, font_sans):
     
     y_curr = SQUARE_TOP_Y + 220
     
-    # Títol
     bbox = draw.textbbox((0, 0), title, font=font_title)
     draw.text(((CANVAS_W - (bbox[2] - bbox[0])) / 2, y_curr), title, fill='#FFFFFF', font=font_title)
     y_curr += (bbox[3] - bbox[1]) + 40
     
-    # Pregunta
     q_lines = wrap_text(question, draw, font_q, max_width=840)
     for l in q_lines:
         bbox = draw.textbbox((0, 0), l, font=font_q)
@@ -252,7 +260,6 @@ def generate_overlay_type3(data, font_title, font_q, font_opt, font_sans):
         y_curr += (bbox[3] - bbox[1]) + 16
         
     y_curr += 50
-    # Opcions A i B
     for opt in (opt_a, opt_b):
         bbox = draw.textbbox((0, 0), opt, font=font_opt)
         draw.text(((CANVAS_W - (bbox[2] - bbox[0])) / 2, y_curr), opt, fill='#FFFFFF', font=font_opt)
@@ -274,7 +281,6 @@ def generate_overlays_type4(data, font_serif, font_sans):
         
         current_lines = lines_text[:count]
         
-        # Càlcul d'alçada total
         all_wrapped = []
         for l in current_lines:
             all_wrapped.extend(wrap_text(l, draw, font_serif, max_width=840))
@@ -282,7 +288,7 @@ def generate_overlays_type4(data, font_serif, font_sans):
         total_h = len(all_wrapped) * 60 + (len(current_lines) - 1) * 30
         y_curr = SQUARE_TOP_Y + (SQUARE_SIZE - total_h) / 2
         
-        for idx, line in enumerate(current_lines):
+        for line in current_lines:
             sub_lines = wrap_text(line, draw, font_serif, max_width=840)
             for sl in sub_lines:
                 bbox = draw.textbbox((0, 0), sl, font=font_serif)
@@ -310,7 +316,6 @@ def generate_overlays_type5(data, font_title, font_item, font_sans):
         
         y_curr = SQUARE_TOP_Y + 200
         
-        # Títol
         t_lines = wrap_text(title, draw, font_title, max_width=840)
         for tl in t_lines:
             bbox = draw.textbbox((0, 0), tl, font=font_title)
@@ -319,10 +324,8 @@ def generate_overlays_type5(data, font_title, font_item, font_sans):
             
         y_curr += 50
         
-        # Items acumulatius
         for idx in range(count):
             item_text = f"☑  {items[idx]}"
-            bbox = draw.textbbox((0, 0), item_text, font=font_item)
             draw.text((160, y_curr), item_text, fill='#FFFFFF', font=font_item)
             y_curr += 70
 
@@ -341,19 +344,15 @@ def render_moviepy_reel(bg_video_path, overlay_paths, duration_per_frame, output
     """Combina el vídeo de fons de Pexels amb la seqüència de capes PNG de PIL"""
     print(f"⚙️ Ensamblant vídeo final ({output_path}) amb MoviePy...")
     
-    # Carregar vídeo de fons
     total_duration = sum(duration_per_frame)
     clip_bg = VideoFileClip(bg_video_path).subclip(0, total_duration)
     clip_bg = clip_bg.resize(height=CANVAS_H)
     
-    # Ajustar l'amplada si s'ha d'omplir el canvas de 1080x1920
     if clip_bg.w < CANVAS_W:
         clip_bg = clip_bg.resize(width=CANVAS_W)
     
-    # Retallar per centrar exactament a 1080x1920
     clip_bg = clip_bg.crop(x_center=clip_bg.w / 2, y_center=clip_bg.h / 2, width=CANVAS_W, height=CANVAS_H)
     
-    # Construir seqüència d'overlay clips
     overlay_clips = []
     start_time = 0
     for idx, img_p in enumerate(overlay_paths):
@@ -367,7 +366,7 @@ def render_moviepy_reel(bg_video_path, overlay_paths, duration_per_frame, output
     print("✅ Reel generat amb èxit!")
 
 # ========================================================
-# TELEGRAM / BUFFER / GITHUB
+# TELEGRAM / CSV / ROTACIÓ DE TIPUS
 # ========================================================
 
 def send_telegram_video(video_path, caption):
@@ -406,32 +405,39 @@ def write_csv_safe(csv_path, headers, rows):
         writer.writerow(headers)
         writer.writerows(rows)
 
+def save_next_video_type(current_type):
+    types = ['type1', 'type2', 'type3', 'type4', 'type5']
+    next_type = types[(types.index(current_type) + 1) % len(types)] if current_type in types else 'type1'
+    with open(STATE_PATH, 'w', encoding='utf-8') as f:
+        f.write(next_type)
+    return next_type
+
 def pick_reel_type_to_process():
-    """Determina quin tipus de vídeo toca processar"""
     if FORCE_TYPE and FORCE_TYPE in CSV_PATHS:
-        print(f"🧪 [MODE SELECCIÓ MANUAL] S'ha forçat l'execució del tipus: {FORCE_TYPE}")
-        post_type = FORCE_TYPE
+        print(f"🧪 [MODE SELECCIÓ MANUAL] Tipus forçat: {FORCE_TYPE}")
+        preferred_type = FORCE_TYPE
     else:
-        # Llegeix del fitxer d'estat
-        post_type = 'type1'
+        preferred_type = 'type1'
         if os.path.exists(STATE_PATH):
-            with open(STATE_PATH, 'r') as f:
+            with open(STATE_PATH, 'r', encoding='utf-8') as f:
                 v = f.read().strip()
                 if v in CSV_PATHS:
-                    post_type = v
+                    preferred_type = v
 
-    csv_path = CSV_PATHS[post_type]
-    headers, rows = read_csv_safe(csv_path)
+    # Prova el preferit primer, i si està completat, prova els altres
+    types_order = [preferred_type] + [t for t in CSV_PATHS.keys() if t != preferred_type]
     
-    if not headers or 'Status' not in headers:
-        print(f"❌ Error: CSV no vàlid a {csv_path}")
-        return None, None, None, None, None, None
+    for post_type in types_order:
+        csv_path = CSV_PATHS[post_type]
+        headers, rows = read_csv_safe(csv_path)
+        if not headers or 'Status' not in headers:
+            continue
 
-    status_idx = headers.index('Status')
-    for idx, r in enumerate(rows):
-        if r[status_idx].strip().lower() == 'pending':
-            post_data = dict(zip(headers, r))
-            return post_type, csv_path, headers, rows, idx, post_data
+        status_idx = headers.index('Status')
+        for idx, r in enumerate(rows):
+            if r[status_idx].strip().lower() == 'pending':
+                post_data = dict(zip(headers, r))
+                return post_type, csv_path, headers, rows, idx, post_data
 
     return None, None, None, None, None, None
 
@@ -449,7 +455,7 @@ def main():
     post_type, csv_path, headers, rows, current_idx, data = pick_reel_type_to_process()
     
     if not post_type:
-        print("🎉 Tots els vídeos del tipus seleccionat estan completats ('Done')!")
+        print("🎉 Tots els vídeos de tots els CSVs estan completats ('Done')!")
         return
 
     video_id = data.get('Video_ID', 'Reel_1')
@@ -460,74 +466,65 @@ def main():
     font_serif_italic = ImageFont.truetype(FONT_SERIF_ITALIC_PATH, 44)
     font_sans = ImageFont.truetype(FONT_SANS_PATH, 28)
 
-    # 1. Generar capes gràfiques segons el tipus de vídeo
     overlay_paths = []
     durations = []
     
     if post_type == 'type1':
-        # Frase central (8 segons)
         f_path = generate_overlay_type1(data, font_serif_large, font_sans)
-        overlay_paths = [f_path]
-        durations = [8.0]
+        overlay_paths, durations = [f_path], [8.0]
         caption_title = data.get('Phrase', '')
 
     elif post_type == 'type2':
-        # Carousel 3 preguntes (14 segons: 3s títol + 3x 3.6s preguntes)
         overlay_paths = generate_overlays_type2(data, font_serif_large, font_serif, font_sans)
         durations = [3.2, 3.6, 3.6, 3.6]
         caption_title = data.get('Title', '')
 
     elif post_type == 'type3':
-        # Test A/B ràpid (9 segons)
         f_path = generate_overlay_type3(data, font_serif_large, font_serif, font_serif_italic, font_sans)
-        overlay_paths = [f_path]
-        durations = [9.0]
+        overlay_paths, durations = [f_path], [9.0]
         caption_title = data.get('Title', '')
 
     elif post_type == 'type4':
-        # POV nota poètica (10 segons: 3.3s per línia)
         overlay_paths = generate_overlays_type4(data, font_serif, font_sans)
         durations = [3.3, 3.3, 3.4]
         caption_title = f"{data.get('Line_1', '')} {data.get('Line_2', '')}"
 
     elif post_type == 'type5':
-        # Checklist 4 senyals (12 segons: 3s per pas)
         overlay_paths = generate_overlays_type5(data, font_serif_large, font_serif, font_sans)
         durations = [3.0, 3.0, 3.0, 3.0]
         caption_title = data.get('Title', '')
 
-    # 2. Descarregar fons de Pexels
     bg_video_path = download_pexels_video()
-    
-    # 3. Renderitzar vídeo final .mp4
     output_video_path = os.path.join(VIDEOS_DIR, f"{video_id}.mp4")
+    
     render_moviepy_reel(bg_video_path, overlay_paths, durations, output_video_path)
 
-    # Text de peu de foto / Telegram
     tags = "#couples #relationshipgoals #couplesreels #formfriends"
     caption = f"✨ <b>{html.escape(caption_title)}</b>\n\nTag your person in the comments ❤️\n\nPlay at formfriends.com\n\n{tags}"
 
-    # Marquem com a Done al CSV
+    # Actualitzem l'Estat a Done
     status_idx = headers.index('Status')
     rows[current_idx][status_idx] = 'Done'
     write_csv_safe(csv_path, headers, rows)
 
+    # Desa el proper tipus de vídeo per a la rotació
+    next_type = save_next_video_type(post_type)
+
+    csv_relpath = os.path.relpath(csv_path, BASE_DIR)
+    state_relpath = os.path.relpath(STATE_PATH, BASE_DIR)
+
     if TEST_MODE:
-        # ========================================================
-        # MODE PROVA: ENVIAMENT NOMÉS A TELEGRAM
-        # ========================================================
         print("🧪 MODE PROVA ACTIVAT: S'omet Buffer. Enviant el vídeo a Telegram...")
         telegram_caption = f"🧪 <b>[MODE PROVA - REEL] {video_id} ({post_type})</b>\n\n{caption}"
         send_telegram_video(output_video_path, telegram_caption)
-        print("📝 Fitxer CSV actualitzat localment!")
+        
+        commit_repo_files([csv_relpath, state_relpath], f"chore: {video_id} -> Done (mode prova, {post_type})")
+        print(f"📝 CSV actualitzat a Git! {video_id} -> Done. Proper tipus: {next_type}.")
 
     else:
-        # ========================================================
-        # MODE PRODUCCIÓ: BUFFER
-        # ========================================================
         print("📤 MODE PRODUCCIÓ: Publicació a Buffer...")
-        # Aquí s'integraria la pujada de l'URL del vídeo a Buffer
         send_telegram_video(output_video_path, f"🚀 <b>[PUBLICAT] {video_id}</b>\n\n{caption}")
+        commit_repo_files([csv_relpath, state_relpath], f"chore: {video_id} -> Done ({post_type})")
 
 if __name__ == "__main__":
     main()
