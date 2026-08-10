@@ -3,7 +3,7 @@
                   CoupleForms / FormFriends Couples Bot
 ===============================================================================
 Data d'actualització: Agost 2026
-Versió del Sistema: 4.1 (Carrousels d'Imatges + Motor de Vídeo Reels/TikToks amb MoviePy, Pexels API HD, Text Shadow i Transicions Blackfade)
+Versió del Sistema: 4.2 (Carrousels d'Imatges + 5 CSVs de Reels amb 30 Posts cadascun, Pexels HD, Text Shadow i Transicions Blackfade)
 Estat del Sistema: Producció / Actiu
 Repositori Target: https://github.com/[user]/coupleforms
 
@@ -14,8 +14,8 @@ CoupleForms és una canalització d'automatització d'extrem a extrem (End-to-En
 
 El seu objectiu és la generació automàtica i publicació de contingut de doble format enfocat al nínxol de parelles ("Couples") per a Instagram i TikTok, dirigint el tràfic cap a la plataforma web `formfriends.com`:
 
-1. Carrousels d'Imatges (1080x1080, 6 slides): Estil retro 35mm amb preguntes profundes i tests de parella.
-2. Vídeos / Reels / TikToks (1080x1920, 9:16): Fons de paisatge d'estoc romàntic en moviment, canviant cada ~4s amb transicions de fosa a negre, un marc quadrat retro centrat (1080x1080 a Y=420) i contingut dinàmic llegible amb ombra de text.
+1. Carrousels d'Imatges (1080x1080, 6 slides): Estil retro 35mm amb preguntes profundes i tests de parella (100 registres a `posts.csv` i `posts_test.csv`).
+2. Vídeos / Reels / TikToks (1080x1920, 9:16): Fons de paisatges naturals HD de Pexels, canviant cada ~4s amb transicions de fosa a negre, un marc quadrat retro centrat (1080x1080 a Y=420) i contingut dinàmic llegible amb ombra de text (150 registres repartits en 5 CSVs).
 
 -------------------------------------------------------------------------------
 2. ESTRUCTURA DE FITXERS I DIRECTORIS
@@ -27,12 +27,12 @@ El seu objectiu és la generació automàtica i publicació de contingut de dobl
 │       └── reels_workflow.yml      # Workflow per als vídeos (Reels / TikTok)
 ├── public_slides/                  # Directori de sortida per a imatges (.jpg)
 ├── public_videos/                  # Directori de sortida per a vídeos (.mp4)
-├── videos/                         # Subcarpeta amb els CSVs per als 5 tipus de reels:
-│   ├── video_phrases.csv           # Tipus 1: Frase central
-│   ├── video_questions.csv         # Tipus 2: Carousel de 3 preguntes
-│   ├── video_tests.csv             # Tipus 3: Test You / Me
-│   ├── video_povs.csv              # Tipus 4: POV nota poètica
-│   └── video_checklists.csv        # Tipus 5: Checklist d'items
+├── videos/                         # Subcarpeta amb els CSVs per als 5 tipus de reels (30 posts cadascun):
+│   ├── video_phrases.csv           # Tipus 1: Frase central (100 registres)
+│   ├── video_questions.csv         # Tipus 2: Carousel de 3 preguntes (30 registres)
+│   ├── video_tests.csv             # Tipus 3: Test You / Me (30 registres)
+│   ├── video_povs.csv              # Tipus 4: POV nota poètica (30 registres)
+│   └── video_checklists.csv        # Tipus 5: Checklist d'items (30 registres)
 ├── generate_and_send_couples.py    # Script principal per a carrousels d'imatges
 ├── generate_and_send_reels.py      # Script principal per a generació de vídeo
 ├── posts.csv                       # CSV de carrousels tipus 'Question'
@@ -59,21 +59,20 @@ El seu objectiu és la generació automàtica i publicació de contingut de dobl
 -------------------------------------------------------------------------------
 - Canvas de vídeo: 1080 x 1920 píxels (Format vertical 9:16), H.264 MP4 a 24 fps.
 - Estètica del marc: Fons negre pur (`ColorClip`) amb vídeo retallat exactament a un quadrat centrat de 1080x1080 a Y=420. Barres superiors i inferiors 100% negres opaques.
-- Font de Vídeo de Fons: Pexels Video API (`https://api.pexels.com/videos/search`), filtrat per alta resolució (`min_width=1080`, `min_height=1080`) i cerques romàntiques/càlides (`"romantic sunset ocean"`, `"cozy twilight lake"`, `"warm golden hour landscape"`, etc.).
+- Font de Vídeo de Fons: Pexels Video API (`https://api.pexels.com/videos/search`), filtrat per alta resolució (`min_width=1080`, `min_height=1080`) i cerques de paisatges naturals ("scenic nature landscape", "peaceful ocean sunset", "calm forest trees", etc.).
 - Multi-vídeo i Transicions: Descarrega múltiples vídeos diferents i els empalma canviant cada ~4s amb fosa a negre (`fadein(0.3).fadeout(0.3)`).
-- Engine de Renderització: PIL (Pillow) genera capes PNG transparents amb el marc retro, text centrat i ombra fosca darrere de cada lletra (`draw_text_centered_with_shadow`) per garantir llegibilitat sobre fons clars. MoviePy ensambla les capes.
-- Patch de compatibilitat: Inclou monkey-patch `Image.ANTIALIAS = Image.Resampling.LANCZOS` per garantir funcionament amb Pillow 10+ i suport dual MoviePy v1.x/v2.x.
+- Engine de Renderització: PIL (Pillow) genera capes PNG transparents amb el marc retro, text centrat i ombra fosca darrere de cada lletra (`draw_text_centered_with_shadow`) per garantir llegibilitat sobre qualsevol fons de vídeo. MoviePy ensambla les capes.
 
 Tipus de Reels i Esquema de CSVs (Rotació automàtica o selecció via `FORCE_TYPE`):
-1. `type1` (videos/video_phrases.csv): Frase d'amor central única (8 segons).
+1. `type1` (videos/video_phrases.csv - 100 posts): Frase d'amor central única (8 segons).
    Schema: `Video_ID, Phrase, Status`
-2. `type2` (videos/video_questions.csv): Carousel de 3 preguntes seqüencials (14 segons).
+2. `type2` (videos/video_questions.csv - 30 posts): Carousel de 3 preguntes seqüencials (14 segons).
    Schema: `Video_ID, Title, Question_1, Question_2, Question_3, Status`
-3. `type3` (videos/video_tests.csv): Test A/B ràpid amb pregunta central i opcions fixes "A) You" / "B) Me" (9 segons).
+3. `type3` (videos/video_tests.csv - 30 posts): Test A/B ràpid amb pregunta central i opcions fixes "A) You" / "B) Me" (9 segons).
    Schema: `Video_ID, Question, Status`
-4. `type4` (videos/video_povs.csv): POV o nota poètica de frase única fixa (10 segons).
+4. `type4` (videos/video_povs.csv - 30 posts): POV o nota poètica de frase única fixa (10 segons).
    Schema: `Video_ID, Phrase, Status`
-5. `type5` (videos/video_checklists.csv): Checklist de 4 punts animats amb guions `-` (12 segons).
+5. `type5` (videos/video_checklists.csv - 30 posts): Checklist de 4 punts animats amb guions `-` (12 segons).
    Schema: `Video_ID, Title, Item_1, Item_2, Item_3, Item_4, Status`
 
 -------------------------------------------------------------------------------
