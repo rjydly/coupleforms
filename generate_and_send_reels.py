@@ -7,6 +7,10 @@ import subprocess
 
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
 
+# 🛠️ Fix per a compatibilitat de MoviePy 1.0.3 amb Pillow >= 10.0.0
+if not hasattr(Image, 'ANTIALIAS'):
+    Image.ANTIALIAS = Image.Resampling.LANCZOS
+
 # Imports compatibles tant amb MoviePy v1.x com v2.x
 try:
     from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
