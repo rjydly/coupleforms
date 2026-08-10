@@ -23,7 +23,7 @@ except ImportError:
 TEST_MODE = True  # 🧪 Canvia a False per a producció (publicar a Buffer)
 
 # Permet forçar un tipus de vídeo específic ('type1', 'type2', 'type3', 'type4', 'type5' o None)
-FORCE_TYPE = "type1"  # 👈 Canvia això a 'type1', 'type2', 'type3', etc. per provar-los!
+FORCE_TYPE = "type2"  # 👈 Canvia això a 'type1', 'type2', 'type3', etc. per provar-los!
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, 'public_videos')
