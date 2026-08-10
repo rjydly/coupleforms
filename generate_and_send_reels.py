@@ -13,9 +13,9 @@ if not hasattr(Image, 'ANTIALIAS'):
 
 # Imports compatibles tant amb MoviePy v1.x com v2.x
 try:
-    from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
+    from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
 except ImportError:
-    from moviepy import VideoFileClip, ImageClip, CompositeVideoClip
+    from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
 
 # ========================================================
 # CONFIGURACIÓ I PARÀMETRES DE PROVA
@@ -72,38 +72,46 @@ def download_file(url, save_path):
         with open(save_path, 'wb') as f:
             f.write(res.content)
 
-def download_pexels_video():
-    """Descarrega un vídeo vertical d'estoc d'alta qualitat des de Pexels API"""
-    queries = ["serene landscape vertical", "calm nature vertical", "sunset ocean vertical", "autumn forest vertical", "peaceful lake vertical"]
-    query = random.choice(queries)
+def download_pexels_videos(count):
+    """Descarrega 'count' vídeos verticals diferents de Pexels API"""
+    queries = [
+        "serene landscape vertical", "calm nature vertical", "sunset ocean vertical", 
+        "autumn forest vertical", "peaceful lake vertical", "mountain view vertical",
+        "misty woods vertical", "dusk sky vertical"
+    ]
+    random.shuffle(queries)
     
     if not PEXELS_API_KEY:
         print("⚠️ PEXELS_API_KEY no configurada en les variables d'entorn.")
         raise Exception("Falta PEXELS_API_KEY.")
 
-    print(f"🎬 Cercant vídeo a Pexels API ('{query}')...")
-    url = f"https://api.pexels.com/videos/search?query={query}&orientation=portrait&per_page=15"
     headers = {"Authorization": PEXELS_API_KEY}
+    downloaded_paths = []
     
-    res = requests.get(url, headers=headers, timeout=15).json()
-    videos = res.get("videos", [])
-    if not videos:
-        raise Exception("No s'han trobat vídeos a Pexels.")
+    print(f"🎬 Cercant {count} vídeos diferents a Pexels API...")
     
-    selected_video = random.choice(videos)
-    video_files = selected_video.get("video_files", [])
-    
-    # Triem el millor fitxer HD vertical (1080x1920)
-    best_file = next((f for f in video_files if f.get("height") == 1920 or f.get("width") == 1080), video_files[0])
-    video_url = best_file["link"]
-    
-    video_res = requests.get(video_url, timeout=30)
-    temp_path = os.path.join(BASE_DIR, "temp_pexels_bg.mp4")
-    with open(temp_path, "wb") as f:
-        f.write(video_res.content)
-    
-    print("✅ Vídeo de fons descarregat de Pexels!")
-    return temp_path
+    for i in range(count):
+        query = queries[i % len(queries)]
+        url = f"https://api.pexels.com/videos/search?query={query}&orientation=portrait&per_page=15"
+        res = requests.get(url, headers=headers, timeout=15).json()
+        videos = res.get("videos", [])
+        
+        if videos:
+            selected_video = random.choice(videos)
+            video_files = selected_video.get("video_files", [])
+            best_file = next((f for f in video_files if f.get("height") == 1920 or f.get("width") == 1080), video_files[0])
+            
+            v_res = requests.get(best_file["link"], timeout=30)
+            p = os.path.join(BASE_DIR, f"temp_pexels_bg_{i}.mp4")
+            with open(p, "wb") as f:
+                f.write(v_res.content)
+            downloaded_paths.append(p)
+            
+    if not downloaded_paths:
+        raise Exception("No s'han pogut descarregar vídeos de Pexels.")
+        
+    print(f"✅ S'han descarregat {len(downloaded_paths)} vídeos de fons!")
+    return downloaded_paths
 
 def wrap_text(text, draw, font, max_width):
     lines = []
@@ -144,34 +152,40 @@ def commit_repo_files(paths, message):
 # ========================================================
 
 def create_base_square_overlay():
-    """Crea la capa RGBA 1080x1920 amb el marc quadrat retro 1080x1080 centrat (Y=420)"""
-    canvas = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    """Crea una capa RGBA 1080x1920 que és 100% NEGRA OPACA a tot arreu
+    (barres de dalt, de baix i marcs) EXCEPTE a la finestra quadrada arrodonida
+    centrada (1080x1080 a Y=420), on deixa veure el vídeo de fons."""
     
-    # 1. Barres fosques superior i inferior fora del quadrat
-    dark_bars = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 210))
-    canvas.paste(dark_bars, (0, 0))
+    # 1. Base 1080x1920 completament negre opac
+    frame = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 255))
     
-    # 2. Marc quadrat centrat amb vora arrodonida retro
+    # 2. Construïm la màscara per retallar la finestra
     blur_r = 10
     margin = 28
     radius = 60
     inner_m = margin - blur_r
     
-    square_mask = Image.new('L', (SQUARE_SIZE, SQUARE_SIZE), 0)
-    draw_sq_mask = ImageDraw.Draw(square_mask)
-    draw_sq_mask.rounded_rectangle(
-        [(inner_m, inner_m), (SQUARE_SIZE - inner_m, SQUARE_SIZE - inner_m)],
-        radius=radius + blur_r, fill=255
+    mask = Image.new('L', (CANVAS_W, CANVAS_H), 0)
+    draw_mask = ImageDraw.Draw(mask)
+    
+    sq_top = SQUARE_TOP_Y + inner_m
+    sq_bottom = SQUARE_TOP_Y + SQUARE_SIZE - inner_m
+    sq_left = inner_m
+    sq_right = CANVAS_W - inner_m
+    
+    draw_mask.rounded_rectangle(
+        [(sq_left, sq_top), (sq_right, sq_bottom)],
+        radius=radius + blur_r,
+        fill=255
     )
-    square_mask = square_mask.filter(ImageFilter.GaussianBlur(radius=blur_r))
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_r))
     
-    clear_square = Image.new('RGBA', (SQUARE_SIZE, SQUARE_SIZE), (0, 0, 0, 80))
-    frame_black = Image.new('RGBA', (SQUARE_SIZE, SQUARE_SIZE), (0, 0, 0, 255))
+    # On mask és 0 (fora del quadrat): Alpha = 255 (NEGRE 100% SÒLID, cap vídeo)
+    # On mask és 255 (dins del quadrat): Alpha = 65 (Tint fosc suau per ajudar al contrast)
+    alpha_channel = Image.eval(mask, lambda val: int(255 - (val / 255.0) * (255 - 65)))
+    frame.putalpha(alpha_channel)
     
-    composite_square = Image.composite(clear_square, frame_black, square_mask)
-    canvas.paste(composite_square, (0, SQUARE_TOP_Y))
-    
-    return canvas
+    return frame
 
 def add_footer_to_overlay(draw_obj, font_sans):
     """Afegeix la marca d'aigua inferior 'coupleforms'"""
@@ -346,38 +360,63 @@ def generate_overlays_type5(data, font_title, font_item, font_sans):
     return frames
 
 # ========================================================
-# ENSAMBLATGE DE VÍDEO AMB MOVIEPY (COMPATIBLE V1 I V2)
+# ENSAMBLATGE DE VÍDEO AMB MOVIEPY (MÚLTIPLES VÍDEOS + BLACKFADE)
 # ========================================================
 
-def render_moviepy_reel(bg_video_path, overlay_paths, duration_per_frame, output_path):
-    """Combina el vídeo de fons de Pexels amb la seqüència de capes PNG de PIL"""
+def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, output_path):
+    """Combina els vídeos de fons de Pexels (canviant cada ~4s amb fosa a negre)
+    amb la seqüència de capes PNG de PIL"""
     print(f"⚙️ Ensamblant vídeo final ({output_path}) amb MoviePy...")
     
     total_duration = sum(duration_per_frame)
-    clip_bg = VideoFileClip(bg_video_path)
+    num_videos = len(bg_video_paths)
+    segment_duration = total_duration / num_videos
     
-    # Subclip
-    if hasattr(clip_bg, 'subclipped'):
-        clip_bg = clip_bg.subclipped(0, total_duration)
-    else:
-        clip_bg = clip_bg.subclip(0, total_duration)
+    subclips = []
+    for i, path in enumerate(bg_video_paths):
+        c = VideoFileClip(path)
         
-    # Resize
-    if hasattr(clip_bg, 'resized'):
-        clip_bg = clip_bg.resized(height=CANVAS_H)
-        if clip_bg.w < CANVAS_W:
-            clip_bg = clip_bg.resized(width=CANVAS_W)
-    else:
-        clip_bg = clip_bg.resize(height=CANVAS_H)
-        if clip_bg.w < CANVAS_W:
-            clip_bg = clip_bg.resize(width=CANVAS_W)
+        # Subclip per a la durada del segment
+        if hasattr(c, 'subclipped'):
+            c = c.subclipped(0, min(segment_duration, c.duration))
+        else:
+            c = c.subclip(0, min(segment_duration, c.duration))
             
-    # Crop
-    if hasattr(clip_bg, 'cropped'):
-        clip_bg = clip_bg.cropped(x_center=clip_bg.w / 2, y_center=clip_bg.h / 2, width=CANVAS_W, height=CANVAS_H)
-    else:
-        clip_bg = clip_bg.crop(x_center=clip_bg.w / 2, y_center=clip_bg.h / 2, width=CANVAS_W, height=CANVAS_H)
+        # Resize
+        if hasattr(c, 'resized'):
+            c = c.resized(height=CANVAS_H)
+            if c.w < CANVAS_W:
+                c = c.resized(width=CANVAS_W)
+        else:
+            c = c.resize(height=CANVAS_H)
+            if c.w < CANVAS_W:
+                c = c.resize(width=CANVAS_W)
+                
+        # Crop centrat
+        if hasattr(c, 'cropped'):
+            c = c.cropped(x_center=c.w / 2, y_center=c.h / 2, width=CANVAS_W, height=CANVAS_H)
+        else:
+            c = c.crop(x_center=c.w / 2, y_center=c.h / 2, width=CANVAS_W, height=CANVAS_H)
+            
+        # Transició curta de fosa a negre (blackfade)
+        try:
+            if hasattr(c, 'fadein') and hasattr(c, 'fadeout'):
+                c = c.fadein(0.3).fadeout(0.3)
+        except Exception as e:
+            print(f"⚠️ Nota transició fade: {e}")
+
+        subclips.append(c)
+        
+    # Concatenar els clips de fons
+    clip_bg = concatenate_videoclips(subclips, method="compose")
     
+    if clip_bg.duration > total_duration:
+        if hasattr(clip_bg, 'subclipped'):
+            clip_bg = clip_bg.subclipped(0, total_duration)
+        else:
+            clip_bg = clip_bg.subclip(0, total_duration)
+            
+    # Capes gràfiques de text PNG sobreposades
     overlay_clips = []
     start_time = 0
     for idx, img_p in enumerate(overlay_paths):
@@ -529,10 +568,14 @@ def main():
         durations = [3.0, 3.0, 3.0, 3.0]
         caption_title = data.get('Title', '')
 
-    bg_video_path = download_pexels_video()
+    # Determinem quants vídeos de fons descarregar (1 vídeo cada ~4 segons)
+    total_duration = sum(durations)
+    num_bg_videos = max(2, int(round(total_duration / 4.0)))
+    
+    bg_video_paths = download_pexels_videos(num_bg_videos)
     output_video_path = os.path.join(VIDEOS_DIR, f"{video_id}.mp4")
     
-    render_moviepy_reel(bg_video_path, overlay_paths, durations, output_video_path)
+    render_moviepy_reel(bg_video_paths, overlay_paths, durations, output_video_path)
 
     tags = "#couples #relationshipgoals #couplesreels #formfriends"
     caption = f"✨ <b>{html.escape(caption_title)}</b>\n\nTag your person in the comments ❤️\n\nPlay at formfriends.com\n\n{tags}"
