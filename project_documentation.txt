@@ -3,7 +3,7 @@
                   CoupleForms / FormFriends Couples Bot
 ===============================================================================
 Data d'actualització: Agost 2026
-Versió de l'Script: 3.5 (Unsplash High-Res API + Custom Retro 35mm Color Matrix + Test/Question Layout Engine + Telegram Album Integration)
+Versió del Sistema: 4.0 (Carrousels d'Imatges + Motor de Vídeo Reels/TikToks amb MoviePy i Pexels API)
 Estat del Sistema: Producció / Actiu
 Repositori Target: https://github.com/[user]/coupleforms
 
@@ -12,7 +12,10 @@ Repositori Target: https://github.com/[user]/coupleforms
 -------------------------------------------------------------------------------
 CoupleForms és una canalització d'automatització d'extrem a extrem (End-to-End Content Pipeline) desenvolupada en Python 3.10 i integrada amb GitHub Actions. 
 
-El seu objectiu és la generació automàtica de carrousels gràfics de 6 diapositives d'alta qualitat visuals (estil 35mm retro / fotografia analògica) enfocats al nínxol de parelles ("Couples"), amb la finalitat de publicar-los automàticament a Instagram i TikTok via Buffer GraphQL API i dirigir el tràfic cap a la plataforma web `formfriends.com`.
+El seu objectiu és la generació automàtica i publicació de contingut de doble format enfocat al nínxol de parelles ("Couples") per a Instagram i TikTok, dirigint el tràfic cap a la plataforma web `formfriends.com`:
+
+1. Carrousels d'Imatges (1080x1080, 6 slides): Estil retro 35mm amb preguntes profundes i tests de parella.
+2. Vídeos / Reels / TikToks (1080x1920, 9:16): Fons de paisatge d'estoc en moviment amb un marc quadrat retro centrat (1080x1080) i contingut dinàmic (frases, carrousels de preguntes, tests A/B, POVs i checklists).
 
 -------------------------------------------------------------------------------
 2. ESTRUCTURA DE FITXERS I DIRECTORIS
@@ -20,55 +23,76 @@ El seu objectiu és la generació automàtica de carrousels gràfics de 6 diapos
 / (Arrel del Repositori)
 ├── .github/
 │   └── workflows/
-│       └── couples_workflow.yml    # Workflow de CI/CD per a GitHub Actions (Cron + Manual)
-├── public_slides/                  # Directori de sortida on es guarden les imatges (.jpg)
-├── generate_and_send_couples.py    # Script principal d'execució i rendering (Python 3.10)
-├── posts.csv                       # Base de dades local en format CSV (100 registres)
-├── PlayfairDisplay-Regular.ttf     # Font Serif principal (descarregada automàticament si no hi és)
-├── PlayfairDisplay-Italic.ttf      # Font Serif per a opcions de Test (descarregada automàticament)
-├── Poppins-Medium.ttf              # Font Sans per a la marca d'aigua/footer
-└── requirements.txt                # Dependències de Python (pillow, requests)
+│       ├── couples_workflow.yml    # Workflow per als carrousels d'imatges
+│       └── reels_workflow.yml      # Workflow per als vídeos (Reels / TikTok)
+├── public_slides/                  # Directori de sortida per a imatges (.jpg)
+├── public_videos/                  # Directori de sortida per a vídeos (.mp4)
+├── videos/                         # Subcarpeta amb els CSVs per als 5 tipus de reels:
+│   ├── video_phrases.csv           # Tipus 1: Frase central
+│   ├── video_questions.csv         # Tipus 2: Carousel de 3 preguntes
+│   ├── video_tests.csv             # Tipus 3: Test A/B ràpid
+│   ├── video_povs.csv              # Tipus 4: POV nota poètica
+│   └── video_checklists.csv        # Tipus 5: Checklist d'items
+├── generate_and_send_couples.py    # Script principal per a carrousels d'imatges
+├── generate_and_send_reels.py      # Script principal per a generació de vídeo
+├── posts.csv                       # CSV de carrousels tipus 'Question'
+├── posts_test.csv                  # CSV de carrousels tipus 'Test'
+├── next_post_type.txt              # Fitxer d'estat per a alternança de carrousels
+├── next_video_type.txt             # Fitxer d'estat per a alternança de tipus de vídeo
+├── PlayfairDisplay-Regular.ttf     # Font Serif principal
+├── PlayfairDisplay-Italic.ttf      # Font Serif per a opcions/èmfasi
+├── Poppins-Medium.ttf              # Font Sans per al footer/marca d'aigua
+└── requirements.txt                # Dependències (pillow, requests, google-genai, moviepy)
 
 -------------------------------------------------------------------------------
-3. ESQUEMA DE DADES (posts.csv)
+3. CANALITZACIÓ 1: CARROUSELS D'IMATGES (generate_and_send_couples.py)
 -------------------------------------------------------------------------------
-El fitxer `posts.csv` actua com a base de dades no relacional local. El script cerca linealment la PRIMERA fila on la columna `Status` (case-insensitive) sigui igual a 'Pending'.
-
-Camps del CSV:
-1. `Post_ID`: Identificador únic del post (ex: Post_1).
-2. `Type`: Tipus de layout gràfic. Valors admesos: 'Question' o 'Test'.
-3. `Category`: Categoria conceptual (ex: Couples).
-4. `Slide_1_Title`: Títol principal de la portada (Slide 1).
-5. `Highlight_Word`: Paraula clau continguda al títol que serà subratllada dinàmicament.
-6. `Slide_2_Question_or_Title`: Pregunta principal de la Slide 2 o enunciat del Test.
-7. `Option_A`: Text de l'opció A (només si Type == 'Test').
-8. `Option_B`: Text de l'opció B (només si Type == 'Test').
-9. `Option_C`: Text de l'opció C (només si Type == 'Test').
-10. `Option_D`: Text de l'opció D (només si Type == 'Test').
-11. `Slide_3_Question`: Pregunta per a la Slide 3.
-12. `Slide_4_Question`: Pregunta per a la Slide 4.
-13. `Slide_5_Question`: Pregunta per a la Slide 5.
-14. `Slide_6_Question`: Pregunta per a la Slide 6.
-15. `Status`: Estat del processament. Valors: 'Pending' | 'Done'.
-
-Regla de parsing defensiu: Si una fila té menys elements que `len(headers)`, el parser de Python reomple la llista amb cadenes buides (`''`) abans d'indexar per evitar `IndexError`. Les línies buides o salts de línia al final del fitxer s'ignoren automàticament.
+- Canvas: 1080 x 1080 píxels (Format quadrat 1:1), JPEG qualitat=95.
+- Estructura: 6 diapositives (Portada + 5 preguntes o enunciats de test).
+- Fons: Generat via Google AI Studio (Imagen 3: `imagen-3.0-generate-002`) o Unsplash High-Res API com a fallback.
+- Filtre Retro 35mm: Baixada de contrast (0.85), transformació de matriu de color vintage (Sepia càlid) i foscor (0.42) amb marc negre exterior arrodonit (radi=60, margin=28) integrat per màscara de difuminat (blur_r=10).
+- Fonts: Playfair Display per als títols/preguntes i Poppins Medium per al footer (`coupleforms`).
+- Font de dades: Intercala automàticament entre `posts.csv` i `posts_test.csv` registrant l'estat a `next_post_type.txt`.
 
 -------------------------------------------------------------------------------
-4. MOTOR DE RENDERITZACIÓ GRÀFICA I DISSENY (PIL / Pillow)
+4. CANALITZACIÓ 2: VÍDEOS / REELS / TIKTOKS (generate_and_send_reels.py)
 -------------------------------------------------------------------------------
-- Mides de Canvas: 1080 x 1080 píxels (Relació d'aspecte 1:1, format quadrat).
-- Format d'exportació: JPEG (.jpg) amb qualitat=95.
-- Nombre de diapositives per post: Exactament 6 slides (No s'inclou slide de CTA final).
+- Canvas de vídeo: 1080 x 1920 píxels (Format vertical 9:16), H.264 MP4 a 24 fps.
+- Estètica del marc: Manté l'estil quadrat retro centrat verticalment (1080x1080 d'Y=420 a Y=1500) amb barres fosques superiors/inferiors per mantenir la coherència visual amb els posts.
+- Font de Vídeo de Fons: Pexels Video API (`https://api.pexels.com/videos/search`), descarregant vídeos d'estoc HD verticals de paisatges naturals sense marca d'aigua (`PEXELS_API_KEY`).
+- Engine de Renderització: PIL (Pillow) genera capes PNG transparents amb el marc retro i el text. Posteriorment, **MoviePy** ensambla les capes PNG sobre el vídeo de Pexels utilitzant `CompositeVideoClip`. Això s'executa sense necessitat d'ImageMagick.
 
-4.1 Font d'Imatges de Fons (Unsplash API / Picsum Engine):
-Per evitar l'ús de models d'IA de pagament o amb límits de crèdits (com Hugging Face o Google AI Studio) i garantir l'absència total de persones/siluetes, s'utilitza l'API d'alta definició d'Unsplash:
-`https://picsum.photos/1080/1080?random={seed}`
-- Cadascuna de les 6 diapositives crida el motor amb una llavor (`seed`) aleatòria diferent (`random.randint(1, 999999)`), garantint un fons de paisatge o espai completament únic per a cada slide.
+Tipus de Reels suportats (Rotació automàtica o selecció via `FORCE_TYPE`):
+1. `type1` (video_phrases.csv): Frase d'amor central única (8 segons).
+2. `type2` (video_questions.csv): Carousel de 3 preguntes seqüencials (14 segons).
+3. `type3` (video_tests.csv): Test A/B ràpid amb títol, pregunta i dues opcions (9 segons).
+4. `type4` (video_povs.csv): POV o nota poètica de 3 línies acumulatives (10 segons).
+5. `type5` (video_checklists.csv): Checklist de 4 punts que es van marcant (12 segons).
 
-4.2 Pipeline de Filtres Retro i Post-processament d'Imatge:
-Totes les imatges de fons passen per la funció `apply_retro_filters_and_frame()`:
-1. Reducció de contrast: `ImageEnhance.Contrast(bg_img).enhance(0.85)` (efecte foto antiga desteñida).
-2. Matriu de color vintage 35mm (Transformació Sepia/Càlida de 12 elements en PIL):
-   `warm_matrix = (1.2, 0.2, -0.1, 0,  0.1, 1.1, -0.1, 0,  0.1, 0.1, 0.8, 0)`
-   S'aplica directament via `img.convert('RGB', warm_matrix)` per a una execució en mil·lisegons.
-3. Baixada de brillantor: `ImageEnhance
+-------------------------------------------------------------------------------
+5. MODES D'EXECUCIÓ, TEST MODE I TELEGRAM INTEGRATION
+-------------------------------------------------------------------------------
+Tots dos scripts incorporen la variable global `TEST_MODE`:
+
+- Si `TEST_MODE = True`:
+  - S'omet la publicació a la xarxa social via Buffer.
+  - S'envia el contingut directament a Telegram via Telegram Bot API per a la seva revisió:
+    - Carrousels: Envia l'àlbum de les 6 diapositives via `sendMediaGroup`.
+    - Reels: Envia el fitxer de vídeo `.mp4` via `sendVideo`.
+  - Es marca la fila com a 'Done' al CSV i es fa commit/push automàtic a Git per mantenir la persistència de dades.
+
+- Si `TEST_MODE = False`:
+  - Publica automàticament a través de Buffer GraphQL API.
+  - Envia confirmació i còpia del mitjà a Telegram.
+  - Actualitza el CSV i fa commit/push a Git.
+
+-------------------------------------------------------------------------------
+6. VARIABLES D'ENTORN I SECRETS DE GITHUB
+-------------------------------------------------------------------------------
+- `PEXELS_API_KEY`: Clau d'API de Pexels per a la descàrrega de vídeos de fons.
+- `TELEGRAM_BOT_TOKEN`: Token del bot de Telegram.
+- `TELEGRAM_CHAT_ID`: ID del xat/canal de Telegram on es reben les proves/revisions.
+- `GEMINI_API_KEY`: Clau de Google AI Studio per a la generació d'imatges via Imagen 3.
+- `BUFFER_ACCESS_TOKEN`: Token d'accés de Buffer per a la publicació automàtica.
+- `GITHUB_TOKEN`: Proporcionat automàticament per GitHub Actions (`permissions: contents: write`).
+===============================================================================
