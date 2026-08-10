@@ -24,7 +24,7 @@ TEST_MODE = True  # 🧪 Canvia a False per a producció (publicar a Buffer)
 
 # Permet forçar un tipus de vídeo específic.
 # Valors admesos: 'type1', 'type2', 'type3', 'type4', 'type5' o None (per a rotació automàtica)
-FORCE_TYPE = "type1"  # 👈 Canvia això a 'type1', 'type2', etc. per provar cadascun!
+FORCE_TYPE = "None"  # 👈 Canvia això a 'type1', 'type2', etc. per provar cadascun!
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, 'public_videos')
