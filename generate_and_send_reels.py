@@ -6,7 +6,12 @@ import html
 import subprocess
 
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
-from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
+
+# Imports compatibles tant amb MoviePy v1.x com v2.x
+try:
+    from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
+except ImportError:
+    from moviepy import VideoFileClip, ImageClip, CompositeVideoClip
 
 # ========================================================
 # CONFIGURACIÓ I PARÀMETRES DE PROVA
@@ -15,7 +20,7 @@ TEST_MODE = True  # 🧪 Canvia a False per a producció (publicar a Buffer)
 
 # Permet forçar un tipus de vídeo específic.
 # Valors admesos: 'type1', 'type2', 'type3', 'type4', 'type5' o None (per a rotació automàtica)
-FORCE_TYPE = "None"  # 👈 Canvia això a 'type1', 'type2', etc. per provar cadascun!
+FORCE_TYPE = "type1"  # 👈 Canvia això a 'type1', 'type2', etc. per provar cadascun!
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, 'public_videos')
@@ -337,7 +342,7 @@ def generate_overlays_type5(data, font_title, font_item, font_sans):
     return frames
 
 # ========================================================
-# ENSAMBLATGE DE VÍDEO AMB MOVIEPY
+# ENSAMBLATGE DE VÍDEO AMB MOVIEPY (COMPATIBLE V1 I V2)
 # ========================================================
 
 def render_moviepy_reel(bg_video_path, overlay_paths, duration_per_frame, output_path):
@@ -345,19 +350,46 @@ def render_moviepy_reel(bg_video_path, overlay_paths, duration_per_frame, output
     print(f"⚙️ Ensamblant vídeo final ({output_path}) amb MoviePy...")
     
     total_duration = sum(duration_per_frame)
-    clip_bg = VideoFileClip(bg_video_path).subclip(0, total_duration)
-    clip_bg = clip_bg.resize(height=CANVAS_H)
+    clip_bg = VideoFileClip(bg_video_path)
     
-    if clip_bg.w < CANVAS_W:
-        clip_bg = clip_bg.resize(width=CANVAS_W)
-    
-    clip_bg = clip_bg.crop(x_center=clip_bg.w / 2, y_center=clip_bg.h / 2, width=CANVAS_W, height=CANVAS_H)
+    # Subclip
+    if hasattr(clip_bg, 'subclipped'):
+        clip_bg = clip_bg.subclipped(0, total_duration)
+    else:
+        clip_bg = clip_bg.subclip(0, total_duration)
+        
+    # Resize
+    if hasattr(clip_bg, 'resized'):
+        clip_bg = clip_bg.resized(height=CANVAS_H)
+        if clip_bg.w < CANVAS_W:
+            clip_bg = clip_bg.resized(width=CANVAS_W)
+    else:
+        clip_bg = clip_bg.resize(height=CANVAS_H)
+        if clip_bg.w < CANVAS_W:
+            clip_bg = clip_bg.resize(width=CANVAS_W)
+            
+    # Crop
+    if hasattr(clip_bg, 'cropped'):
+        clip_bg = clip_bg.cropped(x_center=clip_bg.w / 2, y_center=clip_bg.h / 2, width=CANVAS_W, height=CANVAS_H)
+    else:
+        clip_bg = clip_bg.crop(x_center=clip_bg.w / 2, y_center=clip_bg.h / 2, width=CANVAS_W, height=CANVAS_H)
     
     overlay_clips = []
     start_time = 0
     for idx, img_p in enumerate(overlay_paths):
         dur = duration_per_frame[idx]
-        img_clip = ImageClip(img_p).set_start(start_time).set_duration(dur)
+        img_clip = ImageClip(img_p)
+        
+        if hasattr(img_clip, 'with_start'):
+            img_clip = img_clip.with_start(start_time)
+        else:
+            img_clip = img_clip.set_start(start_time)
+            
+        if hasattr(img_clip, 'with_duration'):
+            img_clip = img_clip.with_duration(dur)
+        else:
+            img_clip = img_clip.set_duration(dur)
+            
         overlay_clips.append(img_clip)
         start_time += dur
         
@@ -424,7 +456,6 @@ def pick_reel_type_to_process():
                 if v in CSV_PATHS:
                     preferred_type = v
 
-    # Prova el preferit primer, i si està completat, prova els altres
     types_order = [preferred_type] + [t for t in CSV_PATHS.keys() if t != preferred_type]
     
     for post_type in types_order:
@@ -502,12 +533,10 @@ def main():
     tags = "#couples #relationshipgoals #couplesreels #formfriends"
     caption = f"✨ <b>{html.escape(caption_title)}</b>\n\nTag your person in the comments ❤️\n\nPlay at formfriends.com\n\n{tags}"
 
-    # Actualitzem l'Estat a Done
     status_idx = headers.index('Status')
     rows[current_idx][status_idx] = 'Done'
     write_csv_safe(csv_path, headers, rows)
 
-    # Desa el proper tipus de vídeo per a la rotació
     next_type = save_next_video_type(post_type)
 
     csv_relpath = os.path.relpath(csv_path, BASE_DIR)
