@@ -22,9 +22,8 @@ except ImportError:
 # ========================================================
 TEST_MODE = True  # 🧪 Canvia a False per a producció (publicar a Buffer)
 
-# Permet forçar un tipus de vídeo específic.
-# Valors admesos: 'type1', 'type2', 'type3', 'type4', 'type5' o None (per a rotació automàtica)
-FORCE_TYPE = "type1"  # 👈 Canvia això a 'type1', 'type2', 'type3', etc. per provar cadascun!
+# Permet forçar un tipus de vídeo específic ('type1', 'type2', 'type3', 'type4', 'type5' o None)
+FORCE_TYPE = "type1"  # 👈 Canvia això a 'type1', 'type2', 'type3', etc. per provar-los!
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, 'public_videos')
@@ -32,7 +31,6 @@ VIDEOS_CSV_DIR = os.path.join(BASE_DIR, 'videos')
 
 STATE_PATH = os.path.join(BASE_DIR, 'next_video_type.txt')
 
-# Rutes dels 5 CSVs independents dins de /videos/
 CSV_PATHS = {
     'type1': os.path.join(VIDEOS_CSV_DIR, 'video_phrases.csv'),     # Frase Central
     'type2': os.path.join(VIDEOS_CSV_DIR, 'video_questions.csv'),   # 3 Preguntes
@@ -41,7 +39,6 @@ CSV_PATHS = {
     'type5': os.path.join(VIDEOS_CSV_DIR, 'video_checklists.csv'),  # Checklist
 }
 
-# Fonts
 FONT_SERIF_REG_PATH = os.path.join(BASE_DIR, 'PlayfairDisplay-Regular.ttf')
 FONT_SERIF_ITALIC_PATH = os.path.join(BASE_DIR, 'PlayfairDisplay-Italic.ttf')
 FONT_SANS_PATH = os.path.join(BASE_DIR, 'Poppins-Medium.ttf')
@@ -50,13 +47,11 @@ FONT_SERIF_REG_URL = "https://github.com/google/fonts/raw/main/ofl/playfairdispl
 FONT_SERIF_ITALIC_URL = "https://github.com/google/fonts/raw/main/ofl/playfairdisplay/PlayfairDisplay-Italic%5Bwght%5D.ttf"
 FONT_SANS_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Medium.ttf"
 
-# ENVS
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
 
-# Mides del Canvas Vertical (9:16) i del Marc Quadrat Centrat (1:1)
 CANVAS_W, CANVAS_H = 1080, 1920
 SQUARE_SIZE = 1080
 SQUARE_TOP_Y = (CANVAS_H - SQUARE_SIZE) // 2  # Y = 420 (Centrat verticalment)
@@ -73,11 +68,12 @@ def download_file(url, save_path):
             f.write(res.content)
 
 def download_pexels_videos(count):
-    """Descarrega 'count' vídeos verticals romàntics d'alta resolució (1080p) de Pexels API"""
+    """Descarrega 'count' vídeos verticals de NATURALESA pura HD (sense espelmes ni interiors) de Pexels API"""
     queries = [
-        "romantic sunset ocean", "cozy twilight lake", "warm golden hour landscape",
-        "romantic aesthetic nature", "vintage sunset beach", "cozy candle ambient",
-        "warm aesthetic forest", "scenic romantic sunset", "peaceful dusk sky"
+        "scenic nature landscape vertical", "peaceful ocean sunset vertical", 
+        "calm forest trees vertical", "mountain reflection lake vertical",
+        "autumn nature landscape vertical", "golden hour ocean waves vertical",
+        "misty green forest vertical", "serene valley sunset vertical"
     ]
     random.shuffle(queries)
     
@@ -88,7 +84,7 @@ def download_pexels_videos(count):
     headers = {"Authorization": PEXELS_API_KEY}
     downloaded_paths = []
     
-    print(f"🎬 Cercant {count} vídeos romàntics d'alta resolució a Pexels API...")
+    print(f"🎬 Cercant {count} vídeos de naturalesa HD a Pexels API...")
     
     for i in range(count):
         query = queries[i % len(queries)]
@@ -113,7 +109,7 @@ def download_pexels_videos(count):
     if not downloaded_paths:
         raise Exception("No s'han pogut descarregar vídeos de Pexels.")
         
-    print(f"✅ S'han descarregat {len(downloaded_paths)} vídeos de fons!")
+    print(f"✅ S'han descarregat {len(downloaded_paths)} vídeos de naturalesa!")
     return downloaded_paths
 
 def wrap_text(text, draw, font, max_width):
