@@ -13,9 +13,9 @@ if not hasattr(Image, 'ANTIALIAS'):
 
 # Imports compatibles tant amb MoviePy v1.x com v2.x
 try:
-    from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
+    from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, ColorClip, concatenate_videoclips
 except ImportError:
-    from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
+    from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, ColorClip, concatenate_videoclips
 
 # ========================================================
 # CONFIGURACIÓ I PARÀMETRES DE PROVA
@@ -24,11 +24,11 @@ TEST_MODE = True  # 🧪 Canvia a False per a producció (publicar a Buffer)
 
 # Permet forçar un tipus de vídeo específic.
 # Valors admesos: 'type1', 'type2', 'type3', 'type4', 'type5' o None (per a rotació automàtica)
-FORCE_TYPE = "None"  # 👈 Canvia això a 'type1', 'type2', etc. per provar cadascun!
+FORCE_TYPE = "type1"  # 👈 Canvia això a 'type1', 'type2', 'type3', etc. per provar cadascun!
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, 'public_videos')
-VIDEOS_CSV_DIR = os.path.join(BASE_DIR, 'videos')  # Carpeta on tens els 5 CSVs
+VIDEOS_CSV_DIR = os.path.join(BASE_DIR, 'videos')
 
 STATE_PATH = os.path.join(BASE_DIR, 'next_video_type.txt')
 
@@ -36,7 +36,7 @@ STATE_PATH = os.path.join(BASE_DIR, 'next_video_type.txt')
 CSV_PATHS = {
     'type1': os.path.join(VIDEOS_CSV_DIR, 'video_phrases.csv'),     # Frase Central
     'type2': os.path.join(VIDEOS_CSV_DIR, 'video_questions.csv'),   # 3 Preguntes
-    'type3': os.path.join(VIDEOS_CSV_DIR, 'video_tests.csv'),       # Test A/B
+    'type3': os.path.join(VIDEOS_CSV_DIR, 'video_tests.csv'),       # Test You / Me
     'type4': os.path.join(VIDEOS_CSV_DIR, 'video_povs.csv'),        # POV Poètic
     'type5': os.path.join(VIDEOS_CSV_DIR, 'video_checklists.csv'),  # Checklist
 }
@@ -73,11 +73,11 @@ def download_file(url, save_path):
             f.write(res.content)
 
 def download_pexels_videos(count):
-    """Descarrega 'count' vídeos verticals diferents de Pexels API"""
+    """Descarrega 'count' vídeos verticals romàntics d'alta resolució (1080p) de Pexels API"""
     queries = [
-        "serene landscape vertical", "calm nature vertical", "sunset ocean vertical", 
-        "autumn forest vertical", "peaceful lake vertical", "mountain view vertical",
-        "misty woods vertical", "dusk sky vertical"
+        "romantic sunset ocean", "cozy twilight lake", "warm golden hour landscape",
+        "romantic aesthetic nature", "vintage sunset beach", "cozy candle ambient",
+        "warm aesthetic forest", "scenic romantic sunset", "peaceful dusk sky"
     ]
     random.shuffle(queries)
     
@@ -88,18 +88,21 @@ def download_pexels_videos(count):
     headers = {"Authorization": PEXELS_API_KEY}
     downloaded_paths = []
     
-    print(f"🎬 Cercant {count} vídeos diferents a Pexels API...")
+    print(f"🎬 Cercant {count} vídeos romàntics d'alta resolució a Pexels API...")
     
     for i in range(count):
         query = queries[i % len(queries)]
-        url = f"https://api.pexels.com/videos/search?query={query}&orientation=square&per_page=15"
+        url = f"https://api.pexels.com/videos/search?query={query}&orientation=portrait&per_page=15&min_width=1080&min_height=1080"
         res = requests.get(url, headers=headers, timeout=15).json()
         videos = res.get("videos", [])
         
         if videos:
             selected_video = random.choice(videos)
             video_files = selected_video.get("video_files", [])
-            best_file = next((f for f in video_files if f.get("height") == 1920 or f.get("width") == 1080), video_files[0])
+            
+            # Filtrem fitxers MP4 en alta definició (HD / >=1080p)
+            hd_files = [f for f in video_files if f.get("file_type") == "video/mp4" and (f.get("height", 0) >= 1080 or f.get("width", 0) >= 1080)]
+            best_file = max(hd_files, key=lambda f: f.get("width", 0) * f.get("height", 0)) if hd_files else video_files[0]
             
             v_res = requests.get(best_file["link"], timeout=30)
             p = os.path.join(BASE_DIR, f"temp_pexels_bg_{i}.mp4")
@@ -130,8 +133,17 @@ def wrap_text(text, draw, font, max_width):
     lines.append(current_line)
     return lines
 
+def draw_text_centered_with_shadow(draw, text, font, y_pos, fill_color='#FFFFFF', shadow_color='#000000'):
+    """Dibuixa text centrat horitzontalment amb una ombra fosca per llegibilitat"""
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    x = (CANVAS_W - tw) / 2
+    
+    draw.text((x + 2, y_pos + 2), text, fill=shadow_color, font=font)
+    draw.text((x, y_pos), text, fill=fill_color, font=font)
+    return (bbox[3] - bbox[1])
+
 def commit_repo_files(paths, message):
-    """Fa git add, commit i push dels fitxers modificats"""
     repo = os.getenv("GITHUB_REPOSITORY")
     if not repo:
         print("ℹ️ No s'ha detectat GITHUB_REPOSITORY: s'omet el commit (execució local).")
@@ -147,19 +159,16 @@ def commit_repo_files(paths, message):
         print(f"⚠️ Error fent commit/push: {e}")
         return False
 
-# ========================================================
+# ==========================================================
 # RENDERITZACIÓ DEL MARC QUADRAT RETRO SOBRE CANVAS VERTICAL
-# ========================================================
+# ==========================================================
 
 def create_base_square_overlay():
-    """Crea una capa RGBA 1080x1920 que és 100% NEGRA OPACA a tot arreu
-    (barres de dalt, de baix i marcs) EXCEPTE a la finestra quadrada arrodonida
-    centrada (1080x1080 a Y=420), on deixa veure el vídeo de fons."""
+    """Crea la capa RGBA 1080x1920 que és 100% NEGRA OPACA a les barres superiors/inferiors
+    i dibuixa el marc arrodonit sobre el quadrat centrat (Y=420)."""
     
-    # 1. Base 1080x1920 completament negre opac
     frame = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 255))
     
-    # 2. Construïm la màscara per retallar la finestra
     blur_r = 10
     margin = 28
     radius = 60
@@ -180,26 +189,22 @@ def create_base_square_overlay():
     )
     mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_r))
     
-    # On mask és 0 (fora del quadrat): Alpha = 255 (NEGRE 100% SÒLID, cap vídeo)
-    # On mask és 255 (dins del quadrat): Alpha = 65 (Tint fosc suau per ajudar al contrast)
-    alpha_channel = Image.eval(mask, lambda val: int(255 - (val / 255.0) * (255 - 65)))
+    alpha_channel = Image.eval(mask, lambda val: int(255 - (val / 255.0) * (255 - 50)))
     frame.putalpha(alpha_channel)
     
     return frame
 
 def add_footer_to_overlay(draw_obj, font_sans):
-    """Afegeix la marca d'aigua inferior 'coupleforms'"""
+    """Afegeix la marca d'aigua inferior 'coupleforms' amb ombra"""
     text = "coupleforms"
-    bbox = draw_obj.textbbox((0, 0), text, font=font_sans)
-    tw = bbox[2] - bbox[0]
-    draw_obj.text(((CANVAS_W - tw) / 2, SQUARE_TOP_Y + 920), text, fill=(255, 255, 255, 220), font=font_sans)
+    draw_text_centered_with_shadow(draw_obj, text, font_sans, SQUARE_TOP_Y + 920, fill_color=(255, 255, 255, 230))
 
 # ========================================================
 # GENERADORS DE CAPES GRAFIQUES PER A CADA TIPUS DE REEL
 # ========================================================
 
 def generate_overlay_type1(data, font_serif, font_sans):
-    """Tipus 1: Frase central única"""
+    """Tipus 1: Frase central única amb ombra"""
     base = create_base_square_overlay()
     draw = ImageDraw.Draw(base)
     
@@ -211,10 +216,8 @@ def generate_overlay_type1(data, font_serif, font_sans):
     
     y_curr = SQUARE_TOP_Y + (SQUARE_SIZE - total_h) / 2
     for l in lines:
-        bbox = draw.textbbox((0, 0), l, font=font_serif)
-        tw = bbox[2] - bbox[0]
-        draw.text(((CANVAS_W - tw) / 2, y_curr), l, fill='#FFFFFF', font=font_serif)
-        y_curr += (bbox[3] - bbox[1]) + 24
+        h = draw_text_centered_with_shadow(draw, l, font_serif, y_curr)
+        y_curr += h + 24
         
     add_footer_to_overlay(draw, font_sans)
     img_path = os.path.join(BASE_DIR, "temp_frame_t1.png")
@@ -244,14 +247,11 @@ def generate_overlays_type2(data, font_title, font_q, font_sans):
         
         if idx > 0:
             tag = f"QUESTION 0{idx}"
-            tag_bbox = draw.textbbox((0, 0), tag, font=font_sans)
-            draw.text(((CANVAS_W - (tag_bbox[2] - tag_bbox[0])) / 2, y_curr - 80), tag, fill='#E0E0E0', font=font_sans)
+            draw_text_centered_with_shadow(draw, tag, font_sans, y_curr - 80, fill_color='#E0E0E0')
 
         for l in lines:
-            bbox = draw.textbbox((0, 0), l, font=font)
-            tw = bbox[2] - bbox[0]
-            draw.text(((CANVAS_W - tw) / 2, y_curr), l, fill='#FFFFFF', font=font)
-            y_curr += (bbox[3] - bbox[1]) + 20
+            h = draw_text_centered_with_shadow(draw, l, font, y_curr)
+            y_curr += h + 20
 
         add_footer_to_overlay(draw, font_sans)
         f_path = os.path.join(BASE_DIR, f"temp_frame_t2_{idx}.png")
@@ -261,74 +261,62 @@ def generate_overlays_type2(data, font_title, font_q, font_sans):
     return frames
 
 def generate_overlay_type3(data, font_title, font_q, font_opt, font_sans):
-    """Tipus 3: Test A/B ràpid"""
+    """Tipus 3: Test A/B ràpid (Sense títol, només pregunta + You / Me)"""
     base = create_base_square_overlay()
     draw = ImageDraw.Draw(base)
     
-    title = data.get('Title', '')
     question = data.get('Question', '')
-    opt_a = f"A) {data.get('Option_A', '')}"
-    opt_b = f"B) {data.get('Option_B', '')}"
-    
-    y_curr = SQUARE_TOP_Y + 220
-    
-    bbox = draw.textbbox((0, 0), title, font=font_title)
-    draw.text(((CANVAS_W - (bbox[2] - bbox[0])) / 2, y_curr), title, fill='#FFFFFF', font=font_title)
-    y_curr += (bbox[3] - bbox[1]) + 40
+    opt_a = "A) You"
+    opt_b = "B) Me"
     
     q_lines = wrap_text(question, draw, font_q, max_width=840)
+    line_h = [draw.textbbox((0, 0), l, font=font_q)[3] - draw.textbbox((0, 0), l, font=font_q)[1] for l in q_lines]
+    total_q_h = sum(line_h) + (16 * (len(q_lines) - 1))
+    
+    total_content_h = total_q_h + 50 + 40 + 20 + 40
+    y_curr = SQUARE_TOP_Y + (SQUARE_SIZE - total_content_h) / 2
+    
     for l in q_lines:
-        bbox = draw.textbbox((0, 0), l, font=font_q)
-        draw.text(((CANVAS_W - (bbox[2] - bbox[0])) / 2, y_curr), l, fill='#FFFFFF', font=font_q)
-        y_curr += (bbox[3] - bbox[1]) + 16
+        h = draw_text_centered_with_shadow(draw, l, font_q, y_curr)
+        y_curr += h + 16
         
-    y_curr += 50
+    y_curr += 40
     for opt in (opt_a, opt_b):
-        bbox = draw.textbbox((0, 0), opt, font=font_opt)
-        draw.text(((CANVAS_W - (bbox[2] - bbox[0])) / 2, y_curr), opt, fill='#FFFFFF', font=font_opt)
-        y_curr += 80
+        h = draw_text_centered_with_shadow(draw, opt, font_opt, y_curr)
+        y_curr += h + 24
 
     add_footer_to_overlay(draw, font_sans)
     f_path = os.path.join(BASE_DIR, "temp_frame_t3.png")
     base.save(f_path)
     return f_path
 
-def generate_overlays_type4(data, font_serif, font_sans):
-    """Tipus 4: POV nota poètica de 3 línies acumulatives"""
-    lines_text = [data.get('Line_1', ''), data.get('Line_2', ''), data.get('Line_3', '')]
-    frames = []
+def generate_overlay_type4(data, font_serif, font_sans):
+    """Tipus 4: POV nota poètica (Una sola frase fixa durant tot el vídeo)"""
+    base = create_base_square_overlay()
+    draw = ImageDraw.Draw(base)
     
-    for count in range(1, 4):
-        base = create_base_square_overlay()
-        draw = ImageDraw.Draw(base)
+    phrase = data.get('Phrase', '')
+    if not phrase:
+        lines_text = [data.get('Line_1', ''), data.get('Line_2', ''), data.get('Line_3', '')]
+        valid_lines = [l.strip() for l in lines_text if l.strip()]
+        phrase = " ".join(valid_lines)
+    
+    lines = wrap_text(phrase, draw, font_serif, max_width=840)
+    line_h = [draw.textbbox((0, 0), l, font=font_serif)[3] - draw.textbbox((0, 0), l, font=font_serif)[1] for l in lines]
+    total_h = sum(line_h) + (24 * (len(lines) - 1))
+    
+    y_curr = SQUARE_TOP_Y + (SQUARE_SIZE - total_h) / 2
+    for l in lines:
+        h = draw_text_centered_with_shadow(draw, l, font_serif, y_curr)
+        y_curr += h + 24
         
-        current_lines = lines_text[:count]
-        
-        all_wrapped = []
-        for l in current_lines:
-            all_wrapped.extend(wrap_text(l, draw, font_serif, max_width=840))
-            
-        total_h = len(all_wrapped) * 60 + (len(current_lines) - 1) * 30
-        y_curr = SQUARE_TOP_Y + (SQUARE_SIZE - total_h) / 2
-        
-        for line in current_lines:
-            sub_lines = wrap_text(line, draw, font_serif, max_width=840)
-            for sl in sub_lines:
-                bbox = draw.textbbox((0, 0), sl, font=font_serif)
-                tw = bbox[2] - bbox[0]
-                draw.text(((CANVAS_W - tw) / 2, y_curr), sl, fill='#FFFFFF', font=font_serif)
-                y_curr += 60
-            y_curr += 30
-            
-        add_footer_to_overlay(draw, font_sans)
-        f_path = os.path.join(BASE_DIR, f"temp_frame_t4_{count}.png")
-        base.save(f_path)
-        frames.append(f_path)
-        
-    return frames
+    add_footer_to_overlay(draw, font_sans)
+    f_path = os.path.join(BASE_DIR, "temp_frame_t4.png")
+    base.save(f_path)
+    return f_path
 
 def generate_overlays_type5(data, font_title, font_item, font_sans):
-    """Tipus 5: Checklist animat (4 items)"""
+    """Tipus 5: Checklist animat (4 items amb guió en lloc d'emojis)"""
     title = data.get('Title', '')
     items = [data.get('Item_1', ''), data.get('Item_2', ''), data.get('Item_3', ''), data.get('Item_4', '')]
     frames = []
@@ -341,14 +329,14 @@ def generate_overlays_type5(data, font_title, font_item, font_sans):
         
         t_lines = wrap_text(title, draw, font_title, max_width=840)
         for tl in t_lines:
-            bbox = draw.textbbox((0, 0), tl, font=font_title)
-            draw.text(((CANVAS_W - (bbox[2] - bbox[0])) / 2, y_curr), tl, fill='#FFFFFF', font=font_title)
-            y_curr += 50
+            h = draw_text_centered_with_shadow(draw, tl, font_title, y_curr)
+            y_curr += h + 10
             
         y_curr += 50
         
         for idx in range(count):
-            item_text = f"☑  {items[idx]}"
+            item_text = f"-  {items[idx]}"
+            draw.text((162, y_curr + 2), item_text, fill='#000000', font=font_item)
             draw.text((160, y_curr), item_text, fill='#FFFFFF', font=font_item)
             y_curr += 70
 
@@ -359,64 +347,56 @@ def generate_overlays_type5(data, font_title, font_item, font_sans):
         
     return frames
 
-# ========================================================
-# ENSAMBLATGE DE VÍDEO AMB MOVIEPY (MÚLTIPLES VÍDEOS + BLACKFADE)
-# ========================================================
+# =========================================================================
+# ENSAMBLATGE DE VÍDEO AMB MOVIEPY (VÍDEO QUADRAT EXACTE + CANVI CADA ~4s)
+# =========================================================================
 
 def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, output_path):
-    """Combina els vídeos de fons de Pexels (canviant cada ~4s amb fosa a negre)
-    amb la seqüència de capes PNG de PIL"""
+    """Encaixa el vídeo de fons exactament a un quadrat de 1080x1080 a Y=420,
+    aplica transició de fosa a negre entre vídeos diferents i afegeix la capa de text."""
     print(f"⚙️ Ensamblant vídeo final ({output_path}) amb MoviePy...")
     
     total_duration = sum(duration_per_frame)
     num_videos = len(bg_video_paths)
     segment_duration = total_duration / num_videos
     
+    bg_black = ColorClip(size=(CANVAS_W, CANVAS_H), color=(0, 0, 0), duration=total_duration)
+    
     subclips = []
+    start_t = 0
     for i, path in enumerate(bg_video_paths):
         c = VideoFileClip(path)
+        dur = min(segment_duration, c.duration)
         
-        # Subclip per a la durada del segment
         if hasattr(c, 'subclipped'):
-            c = c.subclipped(0, min(segment_duration, c.duration))
+            c_sub = c.subclipped(0, dur)
         else:
-            c = c.subclip(0, min(segment_duration, c.duration))
+            c_sub = c.subclip(0, dur)
             
-        # Resize
-        if hasattr(c, 'resized'):
-            c = c.resized(height=CANVAS_H)
-            if c.w < CANVAS_W:
-                c = c.resized(width=CANVAS_W)
+        if hasattr(c_sub, 'cropped'):
+            c_sq = c_sub.cropped(x_center=c_sub.w / 2, y_center=c_sub.h / 2, width=SQUARE_SIZE, height=SQUARE_SIZE)
         else:
-            c = c.resize(height=CANVAS_H)
-            if c.w < CANVAS_W:
-                c = c.resize(width=CANVAS_W)
-                
-        # Crop centrat
-        if hasattr(c, 'cropped'):
-            c = c.cropped(x_center=c.w / 2, y_center=c.h / 2, width=CANVAS_W, height=CANVAS_H)
-        else:
-            c = c.crop(x_center=c.w / 2, y_center=c.h / 2, width=CANVAS_W, height=CANVAS_H)
+            c_sq = c_sub.crop(x_center=c_sub.w / 2, y_center=c_sub.h / 2, width=SQUARE_SIZE, height=SQUARE_SIZE)
             
-        # Transició curta de fosa a negre (blackfade)
+        if hasattr(c_sq, 'resized'):
+            c_sq = c_sq.resized((SQUARE_SIZE, SQUARE_SIZE))
+        else:
+            c_sq = c_sq.resize((SQUARE_SIZE, SQUARE_SIZE))
+            
+        if hasattr(c_sq, 'with_position'):
+            c_sq = c_sq.with_position((0, SQUARE_TOP_Y)).with_start(start_t)
+        else:
+            c_sq = c_sq.set_position((0, SQUARE_TOP_Y)).set_start(start_t)
+            
         try:
-            if hasattr(c, 'fadein') and hasattr(c, 'fadeout'):
-                c = c.fadein(0.3).fadeout(0.3)
-        except Exception as e:
-            print(f"⚠️ Nota transició fade: {e}")
+            if hasattr(c_sq, 'fadein') and hasattr(c_sq, 'fadeout'):
+                c_sq = c_sq.fadein(0.3).fadeout(0.3)
+        except Exception:
+            pass
 
-        subclips.append(c)
-        
-    # Concatenar els clips de fons
-    clip_bg = concatenate_videoclips(subclips, method="compose")
-    
-    if clip_bg.duration > total_duration:
-        if hasattr(clip_bg, 'subclipped'):
-            clip_bg = clip_bg.subclipped(0, total_duration)
-        else:
-            clip_bg = clip_bg.subclip(0, total_duration)
-            
-    # Capes gràfiques de text PNG sobreposades
+        subclips.append(c_sq)
+        start_t += dur
+
     overlay_clips = []
     start_time = 0
     for idx, img_p in enumerate(overlay_paths):
@@ -436,7 +416,7 @@ def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, outpu
         overlay_clips.append(img_clip)
         start_time += dur
         
-    final_clip = CompositeVideoClip([clip_bg] + overlay_clips)
+    final_clip = CompositeVideoClip([bg_black] + subclips + overlay_clips)
     final_clip.write_videofile(output_path, fps=24, codec="libx264", audio=False, preset="fast")
     print("✅ Reel generat amb èxit!")
 
@@ -556,19 +536,18 @@ def main():
     elif post_type == 'type3':
         f_path = generate_overlay_type3(data, font_serif_large, font_serif, font_serif_italic, font_sans)
         overlay_paths, durations = [f_path], [9.0]
-        caption_title = data.get('Title', '')
+        caption_title = data.get('Question', '')
 
     elif post_type == 'type4':
-        overlay_paths = generate_overlays_type4(data, font_serif, font_sans)
-        durations = [3.3, 3.3, 3.4]
-        caption_title = f"{data.get('Line_1', '')} {data.get('Line_2', '')}"
+        f_path = generate_overlay_type4(data, font_serif, font_sans)
+        overlay_paths, durations = [f_path], [10.0]
+        caption_title = data.get('Phrase', f"{data.get('Line_1', '')} {data.get('Line_2', '')}")
 
     elif post_type == 'type5':
         overlay_paths = generate_overlays_type5(data, font_serif_large, font_serif, font_sans)
         durations = [3.0, 3.0, 3.0, 3.0]
         caption_title = data.get('Title', '')
 
-    # Determinem quants vídeos de fons descarregar (1 vídeo cada ~4 segons)
     total_duration = sum(durations)
     num_bg_videos = max(2, int(round(total_duration / 4.0)))
     
