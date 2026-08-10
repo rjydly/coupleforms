@@ -92,7 +92,7 @@ def download_pexels_videos(count):
     
     for i in range(count):
         query = queries[i % len(queries)]
-        url = f"https://api.pexels.com/videos/search?query={query}&orientation=portrait&per_page=15"
+        url = f"https://api.pexels.com/videos/search?query={query}&orientation=square&per_page=15"
         res = requests.get(url, headers=headers, timeout=15).json()
         videos = res.get("videos", [])
         
