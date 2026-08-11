@@ -3,7 +3,7 @@
                   CoupleForms / FormFriends Couples Bot
 ===============================================================================
 Data d'actualització: Agost 2026
-Versió del Sistema: 4.2 (Carrousels d'Imatges + 5 CSVs de Reels amb 30 Posts cadascun, Pexels HD, Text Shadow i Transicions Blackfade)
+Versió del Sistema: 4.3 (Carrousels d'Imatges + 5 CSVs de Reels amb Àudio Romàntic Freesound v2, Pexels HD, Text Shadow i Transicions Blackfade)
 Estat del Sistema: Producció / Actiu
 Repositori Target: https://github.com/[user]/coupleforms
 
@@ -15,7 +15,7 @@ CoupleForms és una canalització d'automatització d'extrem a extrem (End-to-En
 El seu objectiu és la generació automàtica i publicació de contingut de doble format enfocat al nínxol de parelles ("Couples") per a Instagram i TikTok, dirigint el tràfic cap a la plataforma web `formfriends.com`:
 
 1. Carrousels d'Imatges (1080x1080, 6 slides): Estil retro 35mm amb preguntes profundes i tests de parella (100 registres a `posts.csv` i `posts_test.csv`).
-2. Vídeos / Reels / TikToks (1080x1920, 9:16): Fons de paisatges naturals HD de Pexels, canviant cada ~4s amb transicions de fosa a negre, un marc quadrat retro centrat (1080x1080 a Y=420) i contingut dinàmic llegible amb ombra de text (150 registres repartits en 5 CSVs).
+2. Vídeos / Reels / TikToks (1080x1920, 9:16): Fons de paisatges naturals HD de Pexels, canviant cada ~4s amb transicions de fosa a negre, un marc quadrat retro centrat (1080x1080 a Y=420), contingut dinàmic llegible amb ombra de text i **música romàntica de fons descarregada automàticament via Freesound.org API v2** (150 registres repartits en 5 CSVs).
 
 -------------------------------------------------------------------------------
 2. ESTRUCTURA DE FITXERS I DIRECTORIS
@@ -34,7 +34,7 @@ El seu objectiu és la generació automàtica i publicació de contingut de dobl
 │   ├── video_povs.csv              # Tipus 4: POV nota poètica (30 registres)
 │   └── video_checklists.csv        # Tipus 5: Checklist d'items (30 registres)
 ├── generate_and_send_couples.py    # Script principal per a carrousels d'imatges
-├── generate_and_send_reels.py      # Script principal per a generació de vídeo
+├── generate_and_send_reels.py      # Script principal per a generació de vídeo amb àudio de Freesound
 ├── posts.csv                       # CSV de carrousels tipus 'Question'
 ├── posts_test.csv                  # CSV de carrousels tipus 'Test'
 ├── next_post_type.txt              # Fitxer d'estat per a alternança de carrousels
@@ -57,11 +57,15 @@ El seu objectiu és la generació automàtica i publicació de contingut de dobl
 -------------------------------------------------------------------------------
 4. CANALITZACIÓ 2: VÍDEOS / REELS / TIKTOKS (generate_and_send_reels.py)
 -------------------------------------------------------------------------------
-- Canvas de vídeo: 1080 x 1920 píxels (Format vertical 9:16), H.264 MP4 a 24 fps.
+- Canvas de vídeo: 1080 x 1920 píxels (Format vertical 9:16), H.264 MP4 a 24 fps amb pista d'àudio AAC.
 - Estètica del marc: Fons negre pur (`ColorClip`) amb vídeo retallat exactament a un quadrat centrat de 1080x1080 a Y=420. Barres superiors i inferiors 100% negres opaques.
 - Font de Vídeo de Fons: Pexels Video API (`https://api.pexels.com/videos/search`), filtrat per alta resolució (`min_width=1080`, `min_height=1080`) i cerques de paisatges naturals ("scenic nature landscape", "peaceful ocean sunset", "calm forest trees", etc.).
-- Multi-vídeo i Transicions: Descarrega múltiples vídeos diferents i els empalma canviant cada ~4s amb fosa a negre (`fadein(0.3).fadeout(0.3)`).
-- Engine de Renderització: PIL (Pillow) genera capes PNG transparents amb el marc retro, text centrat i ombra fosca darrere de cada lletra (`draw_text_centered_with_shadow`) per garantir llegibilitat sobre qualsevol fons de vídeo. MoviePy ensambla les capes.
+- **Música de Fons Romàntica (Freesound.org API v2)**: 
+  - Utilitza la clau d'API `FREESOUND_API_KEY` per consultar l'endpoint `https://freesound.org/apiv2/search/text/`.
+  - Cerca automàtica de pistes d'alta qualitat ("romantic piano soft", "soft acoustic guitar romantic", "peaceful piano romance", etc.) filtrant durades de 10 a 120 segons.
+  - Descarrega la previsualització MP3 en alta definició (`preview-hq-mp3`).
+  - processament amb MoviePy: Reducció de volum al 25% (`volumex(0.25)`), ajustament de durada (bucle si és curta o retallada si és llarga) i fade-out d'àudio de 0.8s al final.
+- Engine de Renderització: PIL (Pillow) genera capes PNG transparents amb el marc retro, text centrat i ombra fosca darrere de cada lletra (`draw_text_centered_with_shadow`) per garantir llegibilitat sobre qualsevol fons de vídeo. MoviePy ensambla les capes i l'àudio.
 
 Tipus de Reels i Esquema de CSVs (Rotació automàtica o selecció via `FORCE_TYPE`):
 1. `type1` (videos/video_phrases.csv - 100 posts): Frase d'amor central única (8 segons).
@@ -78,14 +82,14 @@ Tipus de Reels i Esquema de CSVs (Rotació automàtica o selecció via `FORCE_TY
 -------------------------------------------------------------------------------
 5. MODES D'EXECUCIÓ, TEST MODE I TELEGRAM INTEGRATION
 -------------------------------------------------------------------------------
-Tots dos scripts incorporen la variable global `TEST_MODE`:
+Tots dos scripts incorporen la configuració per entorn de `TEST_MODE`:
 
 - Si `TEST_MODE = True`:
   - S'omet la publicació a la xarxa social via Buffer.
   - S'envia el contingut directament a Telegram via Telegram Bot API per a la seva revisió:
     - Carrousels: Envia l'àlbum de les 6 diapositives via `sendMediaGroup`.
-    - Reels: Envia el fitxer de vídeo `.mp4` via `sendVideo`.
-  - Es marca la fila com a 'Done' al CSV i es fa commit/push automàtic a Git per mantenir la persistència de dades.
+    - Reels: Envia el fitxer de vídeo `.mp4` amb àudio via `sendVideo`.
+  - Es marca la fila com a 'Done' al CSV i es fa commit/push automàtic amb `git pull --rebase` a Git per mantenir la persistència de dades.
 
 - Si `TEST_MODE = False`:
   - Publica automàticament a través de Buffer GraphQL API.
@@ -96,6 +100,7 @@ Tots dos scripts incorporen la variable global `TEST_MODE`:
 6. VARIABLES D'ENTORN I SECRETS DE GITHUB
 -------------------------------------------------------------------------------
 - `PEXELS_API_KEY`: Clau d'API de Pexels per a la descàrrega de vídeos de fons HD.
+- `FREESOUND_API_KEY`: Clau d'API de Freesound.org v2 per a la descàrrega de pistes de música romàntica.
 - `TELEGRAM_BOT_TOKEN`: Token del bot de Telegram.
 - `TELEGRAM_CHAT_ID`: ID del xat/canal de Telegram on es reben les proves/revisions.
 - `GEMINI_API_KEY`: Clau de Google AI Studio per a la generació d'imatges via Imagen 3.
