@@ -21,7 +21,7 @@ except ImportError:
 # CONFIGURACIÓ I PARÀMETRES DE PROVA
 # ========================================================
 # Es pot configurar per entorn (TEST_MODE="true") o canviar directament a False per a producció
-TEST_MODE = os.getenv("TEST_MODE", "False").lower() in ("true", "1", "t")
+TEST_MODE = False
 
 # Permet forçar un tipus de vídeo específic ('type1', 'type2', 'type3', 'type4', 'type5' o None)
 FORCE_TYPE = os.getenv("FORCE_TYPE", None)  
