@@ -23,7 +23,8 @@ except ImportError:
 TEST_MODE = True  # 🧪 Canvia a False per a producció (publicar a Buffer)
 
 # Permet forçar un tipus de vídeo específic ('type1', 'type2', 'type3', 'type4', 'type5' o None)
-FORCE_TYPE = "type2"  # 👈 Canvia això a 'type1', 'type2', 'type3', etc. per provar-los!
+# Nota: Si TEST_MODE és False, FORCE_TYPE s'ignora automàticament per mantenir la rotació.
+FORCE_TYPE = "type2"  
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, 'public_videos')
@@ -57,7 +58,7 @@ SQUARE_SIZE = 1080
 SQUARE_TOP_Y = (CANVAS_H - SQUARE_SIZE) // 2  # Y = 420 (Centrat verticalment)
 
 # ========================================================
-# UTILITATS GENERALS I DESCARRÈGUES
+# UTILITATS GENERALS I DESCARREGUES
 # ========================================================
 
 def download_file(url, save_path):
@@ -358,63 +359,79 @@ def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, outpu
     
     bg_black = ColorClip(size=(CANVAS_W, CANVAS_H), color=(0, 0, 0), duration=total_duration)
     
+    raw_bg_clips = []
     subclips = []
-    start_t = 0
-    for i, path in enumerate(bg_video_paths):
-        c = VideoFileClip(path)
-        dur = min(segment_duration, c.duration)
-        
-        if hasattr(c, 'subclipped'):
-            c_sub = c.subclipped(0, dur)
-        else:
-            c_sub = c.subclip(0, dur)
-            
-        if hasattr(c_sub, 'cropped'):
-            c_sq = c_sub.cropped(x_center=c_sub.w / 2, y_center=c_sub.h / 2, width=SQUARE_SIZE, height=SQUARE_SIZE)
-        else:
-            c_sq = c_sub.crop(x_center=c_sub.w / 2, y_center=c_sub.h / 2, width=SQUARE_SIZE, height=SQUARE_SIZE)
-            
-        if hasattr(c_sq, 'resized'):
-            c_sq = c_sq.resized((SQUARE_SIZE, SQUARE_SIZE))
-        else:
-            c_sq = c_sq.resize((SQUARE_SIZE, SQUARE_SIZE))
-            
-        if hasattr(c_sq, 'with_position'):
-            c_sq = c_sq.with_position((0, SQUARE_TOP_Y)).with_start(start_t)
-        else:
-            c_sq = c_sq.set_position((0, SQUARE_TOP_Y)).set_start(start_t)
-            
-        try:
-            if hasattr(c_sq, 'fadein') and hasattr(c_sq, 'fadeout'):
-                c_sq = c_sq.fadein(0.3).fadeout(0.3)
-        except Exception:
-            pass
-
-        subclips.append(c_sq)
-        start_t += dur
-
     overlay_clips = []
-    start_time = 0
-    for idx, img_p in enumerate(overlay_paths):
-        dur = duration_per_frame[idx]
-        img_clip = ImageClip(img_p)
-        
-        if hasattr(img_clip, 'with_start'):
-            img_clip = img_clip.with_start(start_time)
-        else:
-            img_clip = img_clip.set_start(start_time)
+    final_clip = None
+    
+    try:
+        start_t = 0
+        for i, path in enumerate(bg_video_paths):
+            c = VideoFileClip(path)
+            raw_bg_clips.append(c)
+            dur = min(segment_duration, c.duration)
             
-        if hasattr(img_clip, 'with_duration'):
-            img_clip = img_clip.with_duration(dur)
-        else:
-            img_clip = img_clip.set_duration(dur)
+            if hasattr(c, 'subclipped'):
+                c_sub = c.subclipped(0, dur)
+            else:
+                c_sub = c.subclip(0, dur)
+                
+            if hasattr(c_sub, 'cropped'):
+                c_sq = c_sub.cropped(x_center=c_sub.w / 2, y_center=c_sub.h / 2, width=SQUARE_SIZE, height=SQUARE_SIZE)
+            else:
+                c_sq = c_sub.crop(x_center=c_sub.w / 2, y_center=c_sub.h / 2, width=SQUARE_SIZE, height=SQUARE_SIZE)
+                
+            if hasattr(c_sq, 'resized'):
+                c_sq = c_sq.resized((SQUARE_SIZE, SQUARE_SIZE))
+            else:
+                c_sq = c_sq.resize((SQUARE_SIZE, SQUARE_SIZE))
+                
+            if hasattr(c_sq, 'with_position'):
+                c_sq = c_sq.with_position((0, SQUARE_TOP_Y)).with_start(start_t)
+            else:
+                c_sq = c_sq.set_position((0, SQUARE_TOP_Y)).set_start(start_t)
+                
+            try:
+                if hasattr(c_sq, 'fadein') and hasattr(c_sq, 'fadeout'):
+                    c_sq = c_sq.fadein(0.3).fadeout(0.3)
+            except Exception:
+                pass
+
+            subclips.append(c_sq)
+            start_t += dur
+
+        start_time = 0
+        for idx, img_p in enumerate(overlay_paths):
+            dur = duration_per_frame[idx]
+            img_clip = ImageClip(img_p)
             
-        overlay_clips.append(img_clip)
-        start_time += dur
-        
-    final_clip = CompositeVideoClip([bg_black] + subclips + overlay_clips)
-    final_clip.write_videofile(output_path, fps=24, codec="libx264", audio=False, preset="fast")
-    print("✅ Reel generat amb èxit!")
+            if hasattr(img_clip, 'with_start'):
+                img_clip = img_clip.with_start(start_time)
+            else:
+                img_clip = img_clip.set_start(start_time)
+                
+            if hasattr(img_clip, 'with_duration'):
+                img_clip = img_clip.with_duration(dur)
+            else:
+                img_clip = img_clip.set_duration(dur)
+                
+            overlay_clips.append(img_clip)
+            start_time += dur
+            
+        final_clip = CompositeVideoClip([bg_black] + subclips + overlay_clips)
+        final_clip.write_videofile(output_path, fps=24, codec="libx264", audio=False, preset="fast")
+        print("✅ Reel generat amb èxit!")
+
+    finally:
+        # 🧹 Tancament explícit per alliberar memòria RAM en CI/CD (GitHub Actions)
+        if final_clip:
+            try: final_clip.close()
+            except: pass
+        for clip in subclips + overlay_clips + raw_bg_clips:
+            try: clip.close()
+            except: pass
+        try: bg_black.close()
+        except: pass
 
 # ========================================================
 # TELEGRAM / CSV / ROTACIÓ DE TIPUS
@@ -464,7 +481,8 @@ def save_next_video_type(current_type):
     return next_type
 
 def pick_reel_type_to_process():
-    if FORCE_TYPE and FORCE_TYPE in CSV_PATHS:
+    # Només permet forçar el tipus si estem en TEST_MODE
+    if TEST_MODE and FORCE_TYPE and FORCE_TYPE in CSV_PATHS:
         print(f"🧪 [MODE SELECCIÓ MANUAL] Tipus forçat: {FORCE_TYPE}")
         preferred_type = FORCE_TYPE
     else:
@@ -490,6 +508,15 @@ def pick_reel_type_to_process():
                 return post_type, csv_path, headers, rows, idx, post_data
 
     return None, None, None, None, None, None
+
+def cleanup_temp_files(paths):
+    """Elimina fitxers temporals de vídeo i imatges generats durant l'execució"""
+    for p in paths:
+        if p and os.path.exists(p):
+            try:
+                os.remove(p)
+            except Exception as e:
+                print(f"⚠️ No s'ha pogut eliminar el fitxer temporal {p}: {e}")
 
 # ========================================================
 # MAIN
@@ -518,64 +545,70 @@ def main():
 
     overlay_paths = []
     durations = []
+    bg_video_paths = []
     
-    if post_type == 'type1':
-        f_path = generate_overlay_type1(data, font_serif_large, font_sans)
-        overlay_paths, durations = [f_path], [8.0]
-        caption_title = data.get('Phrase', '')
+    try:
+        if post_type == 'type1':
+            f_path = generate_overlay_type1(data, font_serif_large, font_sans)
+            overlay_paths, durations = [f_path], [8.0]
+            caption_title = data.get('Phrase', '')
 
-    elif post_type == 'type2':
-        overlay_paths = generate_overlays_type2(data, font_serif_large, font_serif, font_sans)
-        durations = [3.2, 3.6, 3.6, 3.6]
-        caption_title = data.get('Title', '')
+        elif post_type == 'type2':
+            overlay_paths = generate_overlays_type2(data, font_serif_large, font_serif, font_sans)
+            durations = [3.2, 3.6, 3.6, 3.6]
+            caption_title = data.get('Title', '')
 
-    elif post_type == 'type3':
-        f_path = generate_overlay_type3(data, font_serif_large, font_serif, font_serif_italic, font_sans)
-        overlay_paths, durations = [f_path], [9.0]
-        caption_title = data.get('Question', '')
+        elif post_type == 'type3':
+            f_path = generate_overlay_type3(data, font_serif_large, font_serif, font_serif_italic, font_sans)
+            overlay_paths, durations = [f_path], [9.0]
+            caption_title = data.get('Question', '')
 
-    elif post_type == 'type4':
-        f_path = generate_overlay_type4(data, font_serif, font_sans)
-        overlay_paths, durations = [f_path], [10.0]
-        caption_title = data.get('Phrase', f"{data.get('Line_1', '')} {data.get('Line_2', '')}")
+        elif post_type == 'type4':
+            f_path = generate_overlay_type4(data, font_serif, font_sans)
+            overlay_paths, durations = [f_path], [10.0]
+            caption_title = data.get('Phrase', f"{data.get('Line_1', '')} {data.get('Line_2', '')}")
 
-    elif post_type == 'type5':
-        overlay_paths = generate_overlays_type5(data, font_serif_large, font_serif, font_sans)
-        durations = [3.0, 3.0, 3.0, 3.0]
-        caption_title = data.get('Title', '')
+        elif post_type == 'type5':
+            overlay_paths = generate_overlays_type5(data, font_serif_large, font_serif, font_sans)
+            durations = [3.0, 3.0, 3.0, 3.0]
+            caption_title = data.get('Title', '')
 
-    total_duration = sum(durations)
-    num_bg_videos = max(2, int(round(total_duration / 4.0)))
-    
-    bg_video_paths = download_pexels_videos(num_bg_videos)
-    output_video_path = os.path.join(VIDEOS_DIR, f"{video_id}.mp4")
-    
-    render_moviepy_reel(bg_video_paths, overlay_paths, durations, output_video_path)
-
-    tags = "#couples #relationshipgoals #couplesreels #formfriends"
-    caption = f"✨ <b>{html.escape(caption_title)}</b>\n\nTag your person in the comments ❤️\n\nPlay at formfriends.com\n\n{tags}"
-
-    status_idx = headers.index('Status')
-    rows[current_idx][status_idx] = 'Done'
-    write_csv_safe(csv_path, headers, rows)
-
-    next_type = save_next_video_type(post_type)
-
-    csv_relpath = os.path.relpath(csv_path, BASE_DIR)
-    state_relpath = os.path.relpath(STATE_PATH, BASE_DIR)
-
-    if TEST_MODE:
-        print("🧪 MODE PROVA ACTIVAT: S'omet Buffer. Enviant el vídeo a Telegram...")
-        telegram_caption = f"🧪 <b>[MODE PROVA - REEL] {video_id} ({post_type})</b>\n\n{caption}"
-        send_telegram_video(output_video_path, telegram_caption)
+        total_duration = sum(durations)
+        num_bg_videos = max(2, int(round(total_duration / 4.0)))
         
-        commit_repo_files([csv_relpath, state_relpath], f"chore: {video_id} -> Done (mode prova, {post_type})")
-        print(f"📝 CSV actualitzat a Git! {video_id} -> Done. Proper tipus: {next_type}.")
+        bg_video_paths = download_pexels_videos(num_bg_videos)
+        output_video_path = os.path.join(VIDEOS_DIR, f"{video_id}.mp4")
+        
+        render_moviepy_reel(bg_video_paths, overlay_paths, durations, output_video_path)
 
-    else:
-        print("📤 MODE PRODUCCIÓ: Publicació a Buffer...")
-        send_telegram_video(output_video_path, f"🚀 <b>[PUBLICAT] {video_id}</b>\n\n{caption}")
-        commit_repo_files([csv_relpath, state_relpath], f"chore: {video_id} -> Done ({post_type})")
+        tags = "#couples #relationshipgoals #couplesreels #formfriends"
+        caption = f"✨ <b>{html.escape(caption_title)}</b>\n\nTag your person in the comments ❤️\n\nPlay at formfriends.com\n\n{tags}"
+
+        status_idx = headers.index('Status')
+        rows[current_idx][status_idx] = 'Done'
+        write_csv_safe(csv_path, headers, rows)
+
+        next_type = save_next_video_type(post_type)
+
+        csv_relpath = os.path.relpath(csv_path, BASE_DIR)
+        state_relpath = os.path.relpath(STATE_PATH, BASE_DIR)
+
+        if TEST_MODE:
+            print("🧪 MODE PROVA ACTIVAT: S'omet Buffer. Enviant el vídeo a Telegram...")
+            telegram_caption = f"🧪 <b>[MODE PROVA - REEL] {video_id} ({post_type})</b>\n\n{caption}"
+            send_telegram_video(output_video_path, telegram_caption)
+            
+            commit_repo_files([csv_relpath, state_relpath], f"chore: {video_id} -> Done (mode prova, {post_type})")
+            print(f"📝 CSV actualitzat a Git! {video_id} -> Done. Proper tipus: {next_type}.")
+
+        else:
+            print("📤 MODE PRODUCCIÓ: Publicació a Buffer...")
+            send_telegram_video(output_video_path, f"🚀 <b>[PUBLICAT] {video_id}</b>\n\n{caption}")
+            commit_repo_files([csv_relpath, state_relpath], f"chore: {video_id} -> Done ({post_type})")
+
+    finally:
+        # 🧹 Netegem els fitxers PNG/MP4 temporals per evitar que s'acumulin al repositori
+        cleanup_temp_files(overlay_paths + bg_video_paths)
 
 if __name__ == "__main__":
     main()
