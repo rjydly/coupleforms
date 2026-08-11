@@ -13,18 +13,18 @@ if not hasattr(Image, 'ANTIALIAS'):
 
 # Imports compatibles tant amb MoviePy v1.x com v2.x
 try:
-    from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, ColorClip, concatenate_videoclips
+    from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, ColorClip, AudioFileClip, concatenate_videoclips
 except ImportError:
-    from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, ColorClip, concatenate_videoclips
+    from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, ColorClip, AudioFileClip, concatenate_videoclips
 
 # ========================================================
 # CONFIGURACIÓ I PARÀMETRES DE PROVA
 # ========================================================
-TEST_MODE = True  # 🧪 Canvia a False per a producció (publicar a Buffer)
+# Es pot configurar per entorn (TEST_MODE="true") o canviar directament a False per a producció
+TEST_MODE = os.getenv("TEST_MODE", "False").lower() in ("true", "1", "t")
 
 # Permet forçar un tipus de vídeo específic ('type1', 'type2', 'type3', 'type4', 'type5' o None)
-# Nota: Si TEST_MODE és False, FORCE_TYPE s'ignora automàticament per mantenir la rotació.
-FORCE_TYPE = "type2"  
+FORCE_TYPE = os.getenv("FORCE_TYPE", None)  
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, 'public_videos')
@@ -49,6 +49,7 @@ FONT_SERIF_ITALIC_URL = "https://github.com/google/fonts/raw/main/ofl/playfairdi
 FONT_SANS_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Medium.ttf"
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
+FREESOUND_API_KEY = os.getenv("FREESOUND_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
@@ -69,7 +70,7 @@ def download_file(url, save_path):
             f.write(res.content)
 
 def download_pexels_videos(count):
-    """Descarrega 'count' vídeos verticals de NATURALESA pura HD (sense espelmes ni interiors) de Pexels API"""
+    """Descarrega 'count' vídeos verticals de NATURALESA pura HD de Pexels API"""
     queries = [
         "scenic nature landscape vertical", "peaceful ocean sunset vertical", 
         "calm forest trees vertical", "mountain reflection lake vertical",
@@ -113,6 +114,62 @@ def download_pexels_videos(count):
     print(f"✅ S'han descarregat {len(downloaded_paths)} vídeos de naturalesa!")
     return downloaded_paths
 
+def download_freesound_romantic_music():
+    """Cerca i descarrega una pista de música romàntica d'alta qualitat des de Freesound.org API v2"""
+    if not FREESOUND_API_KEY:
+        print("ℹ️ FREESOUND_API_KEY no configurada. El vídeo es generarà sense àudio de fons.")
+        return None
+
+    queries = [
+        "romantic piano soft", "soft acoustic guitar romantic", 
+        "romantic ambient background", "peaceful piano romance",
+        "soft cinematic romantic piano"
+    ]
+    query = random.choice(queries)
+    print(f"🎵 Cercant música romàntica a Freesound API ('{query}')...")
+
+    url = "https://freesound.org/apiv2/search/text/"
+    params = {
+        "query": query,
+        "filter": "duration:[10 TO 120]",
+        "fields": "id,name,previews,duration",
+        "page_size": 15,
+        "token": FREESOUND_API_KEY
+    }
+
+    try:
+        res = requests.get(url, params=params, timeout=15)
+        if res.status_code != 200:
+            print(f"⚠️ Error Freesound API ({res.status_code}): {res.text[:100]}")
+            return None
+
+        data = res.json()
+        results = data.get("results", [])
+        if not results:
+            print("⚠️ No s'han trobat resultats de música a Freesound.")
+            return None
+
+        selected = random.choice(results)
+        previews = selected.get("previews", {})
+        mp3_url = previews.get("preview-hq-mp3") or previews.get("preview-lq-mp3")
+
+        if not mp3_url:
+            print("⚠️ No s'ha trobat enllaç MP3 per al so seleccionat.")
+            return None
+
+        print(f"📥 Descarregant àudio: '{selected.get('name')}'...")
+        audio_res = requests.get(mp3_url, timeout=20)
+        audio_path = os.path.join(BASE_DIR, "temp_freesound_bg.mp3")
+        with open(audio_path, "wb") as f:
+            f.write(audio_res.content)
+
+        print("✅ Música de fons descarregada amb èxit des de Freesound!")
+        return audio_path
+
+    except Exception as e:
+        print(f"⚠️ Error descarregant àudio de Freesound: {e}")
+        return None
+
 def wrap_text(text, draw, font, max_width):
     lines = []
     words = str(text).split(' ')
@@ -150,6 +207,7 @@ def commit_repo_files(paths, message):
         subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
         subprocess.run(["git", "add"] + list(paths), check=True)
         commit_res = subprocess.run(["git", "commit", "-m", message], check=False)
+        subprocess.run(["git", "pull", "--rebase"], check=False)
         subprocess.run(["git", "push"], check=False)
         return commit_res.returncode == 0
     except Exception as e:
@@ -201,7 +259,6 @@ def add_footer_to_overlay(draw_obj, font_sans):
 # ========================================================
 
 def generate_overlay_type1(data, font_serif, font_sans):
-    """Tipus 1: Frase central única amb ombra"""
     base = create_base_square_overlay()
     draw = ImageDraw.Draw(base)
     
@@ -222,7 +279,6 @@ def generate_overlay_type1(data, font_serif, font_sans):
     return img_path
 
 def generate_overlays_type2(data, font_title, font_q, font_sans):
-    """Tipus 2: Carousel de 3 preguntes seqüencials"""
     frames = []
     texts = [
         data.get('Title', ''),
@@ -258,7 +314,6 @@ def generate_overlays_type2(data, font_title, font_q, font_sans):
     return frames
 
 def generate_overlay_type3(data, font_title, font_q, font_opt, font_sans):
-    """Tipus 3: Test A/B ràpid (Sense títol, només pregunta + You / Me)"""
     base = create_base_square_overlay()
     draw = ImageDraw.Draw(base)
     
@@ -288,7 +343,6 @@ def generate_overlay_type3(data, font_title, font_q, font_opt, font_sans):
     return f_path
 
 def generate_overlay_type4(data, font_serif, font_sans):
-    """Tipus 4: POV nota poètica (Una sola frase fixa durant tot el vídeo)"""
     base = create_base_square_overlay()
     draw = ImageDraw.Draw(base)
     
@@ -313,7 +367,6 @@ def generate_overlay_type4(data, font_serif, font_sans):
     return f_path
 
 def generate_overlays_type5(data, font_title, font_item, font_sans):
-    """Tipus 5: Checklist animat (4 items amb guió en lloc d'emojis)"""
     title = data.get('Title', '')
     items = [data.get('Item_1', ''), data.get('Item_2', ''), data.get('Item_3', ''), data.get('Item_4', '')]
     frames = []
@@ -345,12 +398,12 @@ def generate_overlays_type5(data, font_title, font_item, font_sans):
     return frames
 
 # =========================================================================
-# ENSAMBLATGE DE VÍDEO AMB MOVIEPY (VÍDEO QUADRAT EXACTE + CANVI CADA ~4s)
+# ENSAMBLATGE DE VÍDEO AMB MOVIEPY (VÍDEO + ÀUDIO DE FREESOUND)
 # =========================================================================
 
-def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, output_path):
+def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, output_path, bg_audio_path=None):
     """Encaixa el vídeo de fons exactament a un quadrat de 1080x1080 a Y=420,
-    aplica transició de fosa a negre entre vídeos diferents i afegeix la capa de text."""
+    aplica transició de fosa a negre, afegeix la capa de text i l'àudio de Freesound."""
     print(f"⚙️ Ensamblant vídeo final ({output_path}) amb MoviePy...")
     
     total_duration = sum(duration_per_frame)
@@ -362,6 +415,7 @@ def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, outpu
     raw_bg_clips = []
     subclips = []
     overlay_clips = []
+    audio_clip = None
     final_clip = None
     
     try:
@@ -419,11 +473,64 @@ def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, outpu
             start_time += dur
             
         final_clip = CompositeVideoClip([bg_black] + subclips + overlay_clips)
-        final_clip.write_videofile(output_path, fps=24, codec="libx264", audio=False, preset="fast")
+
+        # 🎵 Integració d'àudio romàntic si s'ha descarregat
+        if bg_audio_path and os.path.exists(bg_audio_path):
+            try:
+                print("🎵 Processant i integrant l'àudio de fons des de Freesound...")
+                audio_clip = AudioFileClip(bg_audio_path)
+
+                # Si l'àudio és més curt que la durada del vídeo, el fem en bucle
+                if audio_clip.duration < total_duration:
+                    try:
+                        from moviepy.audio.fx.audio_loop import audio_loop
+                        audio_clip = audio_loop(audio_clip, duration=total_duration)
+                    except Exception:
+                        pass
+                else:
+                    if hasattr(audio_clip, 'subclipped'):
+                        audio_clip = audio_clip.subclipped(0, total_duration)
+                    else:
+                        audio_clip = audio_clip.subclip(0, total_duration)
+
+                # Reduïm el volum al 25% per ser música suau de fons
+                if hasattr(audio_clip, 'volumex'):
+                    audio_clip = audio_clip.volumex(0.25)
+
+                # Fadeout d'àudio al final de 0.8 segons
+                try:
+                    if hasattr(audio_clip, 'audio_fadeout'):
+                        audio_clip = audio_clip.audio_fadeout(0.8)
+                    elif hasattr(audio_clip, 'fadeout'):
+                        audio_clip = audio_clip.fadeout(0.8)
+                except Exception:
+                    pass
+
+                # Afegim l'àudio al clip final
+                if hasattr(final_clip, 'set_audio'):
+                    final_clip = final_clip.set_audio(audio_clip)
+                elif hasattr(final_clip, 'with_audio'):
+                    final_clip = final_clip.with_audio(audio_clip)
+
+            except Exception as e_audio:
+                print(f"⚠️ Error processant l'àudio (es generarà el vídeo sense àudio): {e_audio}")
+
+        has_audio = audio_clip is not None
+        final_clip.write_videofile(
+            output_path, 
+            fps=24, 
+            codec="libx264", 
+            audio=has_audio,
+            audio_codec="aac" if has_audio else None, 
+            preset="fast"
+        )
         print("✅ Reel generat amb èxit!")
 
     finally:
         # 🧹 Tancament explícit per alliberar memòria RAM en CI/CD (GitHub Actions)
+        if audio_clip:
+            try: audio_clip.close()
+            except: pass
         if final_clip:
             try: final_clip.close()
             except: pass
@@ -481,7 +588,6 @@ def save_next_video_type(current_type):
     return next_type
 
 def pick_reel_type_to_process():
-    # Només permet forçar el tipus si estem en TEST_MODE
     if TEST_MODE and FORCE_TYPE and FORCE_TYPE in CSV_PATHS:
         print(f"🧪 [MODE SELECCIÓ MANUAL] Tipus forçat: {FORCE_TYPE}")
         preferred_type = FORCE_TYPE
@@ -510,7 +616,7 @@ def pick_reel_type_to_process():
     return None, None, None, None, None, None
 
 def cleanup_temp_files(paths):
-    """Elimina fitxers temporals de vídeo i imatges generats durant l'execució"""
+    """Elimina fitxers temporals de vídeo, àudio i imatges generats durant l'execució"""
     for p in paths:
         if p and os.path.exists(p):
             try:
@@ -546,6 +652,7 @@ def main():
     overlay_paths = []
     durations = []
     bg_video_paths = []
+    bg_audio_path = None
     
     try:
         if post_type == 'type1':
@@ -576,10 +683,16 @@ def main():
         total_duration = sum(durations)
         num_bg_videos = max(2, int(round(total_duration / 4.0)))
         
+        # 1. Descarregar vídeos de fons de Pexels
         bg_video_paths = download_pexels_videos(num_bg_videos)
+        
+        # 2. Descarregar música romàntica de fons des de Freesound
+        bg_audio_path = download_freesound_romantic_music()
+
         output_video_path = os.path.join(VIDEOS_DIR, f"{video_id}.mp4")
         
-        render_moviepy_reel(bg_video_paths, overlay_paths, durations, output_video_path)
+        # 3. Ensamblar el vídeo final amb imatges, fons de vídeo i pista d'àudio
+        render_moviepy_reel(bg_video_paths, overlay_paths, durations, output_video_path, bg_audio_path=bg_audio_path)
 
         tags = "#couples #relationshipgoals #couplesreels #formfriends"
         caption = f"✨ <b>{html.escape(caption_title)}</b>\n\nTag your person in the comments ❤️\n\nPlay at formfriends.com\n\n{tags}"
@@ -607,8 +720,11 @@ def main():
             commit_repo_files([csv_relpath, state_relpath], f"chore: {video_id} -> Done ({post_type})")
 
     finally:
-        # 🧹 Netegem els fitxers PNG/MP4 temporals per evitar que s'acumulin al repositori
-        cleanup_temp_files(overlay_paths + bg_video_paths)
+        # 🧹 Netegem els fitxers temporals de vídeo, imatge i àudio
+        all_temp = overlay_paths + bg_video_paths
+        if bg_audio_path:
+            all_temp.append(bg_audio_path)
+        cleanup_temp_files(all_temp)
 
 if __name__ == "__main__":
     main()
