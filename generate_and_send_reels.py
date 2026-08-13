@@ -202,6 +202,7 @@ def draw_text_centered_with_shadow(draw, text, font, y_pos, fill_color='#FFFFFF'
     return (bbox[3] - bbox[1])
 
 def commit_repo_files(paths, message):
+    """Fa git add ., commit, pull --rebase i push sense conflictes d'unstaged changes."""
     repo = os.getenv("GITHUB_REPOSITORY")
     if not repo:
         print("ℹ️ No s'ha detectat GITHUB_REPOSITORY: s'omet el commit (execució local).")
@@ -209,7 +210,10 @@ def commit_repo_files(paths, message):
     try:
         subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
         subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
-        subprocess.run(["git", "add"] + list(paths), check=True)
+        
+        # Afegeix tots els fitxers modificats en disc abans del pull --rebase
+        subprocess.run(["git", "add", "."], check=True)
+        
         commit_res = subprocess.run(["git", "commit", "-m", message], check=False)
         subprocess.run(["git", "pull", "--rebase"], check=False)
         subprocess.run(["git", "push"], check=False)
@@ -569,7 +573,7 @@ def send_telegram_video(video_path, caption):
         print(f"⚠️ Error enviant vídeo a Telegram: {e}")
 
 def post_to_zernio(media_urls, caption):
-    """Envia el vídeo a Zernio API per a la seva publicació a xarxes"""
+    """Envia el vídeo a Zernio API i EL PUBLICA IMMEDIATAMENT."""
     if not ZERNIO_API_KEY:
         print("⚠️ ZERNIO_API_KEY no configurada.")
         return False
@@ -580,16 +584,23 @@ def post_to_zernio(media_urls, caption):
         "Content-Type": "application/json"
     }
 
+    # "publishNow": True evita que es quedi com a borrador i ho publica directament
     payload = {
+        "content": caption,
         "caption": caption,
-        "media": media_urls
+        "mediaUrls": media_urls,
+        "media": media_urls,
+        "publishNow": True
     }
 
     try:
-        print("📤 Enviant vídeo a Zernio API...")
+        print("📤 Enviant vídeo a Zernio API per a publicació immediata...")
         res = requests.post(url, headers=headers, json=payload, timeout=30)
+        print(f"ℹ️ Resposta Zernio Status Code: {res.status_code}")
+        print(f"ℹ️ Resposta Zernio Body: {res.text}")
+
         if res.status_code in (200, 201):
-            print("✅ Reel publicat amb èxit a través de Zernio!")
+            print("🚀 Reel publicat amb èxit a través de Zernio!")
             return True
         else:
             print(f"⚠️ Error a Zernio ({res.status_code}): {res.text}")
