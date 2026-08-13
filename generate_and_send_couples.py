@@ -16,7 +16,7 @@ from google.genai import types
 # ========================================================
 # CONFIGURACIÓ I RUTES
 # ========================================================
-TEST_MODE = False  # 🧪 Canvia a False per publicar realment a Zernio (TikTok) / Xarxes socials
+TEST_MODE = False  # 🧪 Canvia a False per publicar realment a Zernio (TikTok + Instagram)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -26,7 +26,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_QUESTION_PATH = os.path.join(BASE_DIR, 'posts.csv')
 CSV_TEST_PATH = os.path.join(BASE_DIR, 'posts_test.csv')
 
-# Fitxer d'estat minúscul que recorda quin tipus de post toca la propera vegada,
+# Fitxer d'estat que recorda quin tipus de post toca la propera vegada,
 # per poder intercalar Question / Test entre execucions consecutives del workflow.
 STATE_PATH = os.path.join(BASE_DIR, 'next_post_type.txt')
 
@@ -42,8 +42,11 @@ FONT_SERIF_REG_URL = "https://github.com/google/fonts/raw/main/ofl/playfairdispl
 FONT_SERIF_ITALIC_URL = "https://github.com/google/fonts/raw/main/ofl/playfairdisplay/PlayfairDisplay-Italic%5Bwght%5D.ttf"
 FONT_SANS_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Medium.ttf"
 
-# ENVS
+# ENVS (Claus d'API i IDs de compte)
 ZERNIO_API_KEY = os.getenv("ZERNIO_API_KEY")
+ZERNIO_TIKTOK_ACCOUNT_ID = os.getenv("ZERNIO_TIKTOK_ACCOUNT_ID")
+ZERNIO_INSTAGRAM_ACCOUNT_ID = os.getenv("ZERNIO_INSTAGRAM_ACCOUNT_ID")
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Clau de Google AI Studio
@@ -317,7 +320,7 @@ def commit_repo_files(paths, message):
         print(f"⚠️ Error fent commit/push: {e}")
         return False
 
-def post_to_zernio(api_key, image_urls, title, caption):
+def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls, title, caption):
     """Publica un carrousel d'imatges a TikTok i Instagram via Zernio API"""
     zernio_url = "https://zernio.com/api/v1/posts"
     headers = {
@@ -332,15 +335,21 @@ def post_to_zernio(api_key, image_urls, title, caption):
 
     payload = {
         "platforms": [
-            {"platform": "tiktok"},
-            {"platform": "instagram"}  # 👈 Afegit Instagram
+            {
+                "platform": "tiktok",
+                "accountId": tiktok_account_id
+            },
+            {
+                "platform": "instagram",
+                "accountId": instagram_account_id
+            }
         ],
         "type": "carousel",
         "media_urls": image_urls,
         "title": clean_title,
         "caption": caption,
         "tiktok_options": {
-            "auto_add_music": True  # S'aplica només a TikTok
+            "auto_add_music": True
         }
     }
 
@@ -527,17 +536,17 @@ def main():
 
     else:
         # ========================================================
-        # MODE PRODUCCIÓ: PUBLICACIÓ A ZERNIO (TIKTOK)
+        # MODE PRODUCCIÓ: PUBLICACIÓ A ZERNIO (TIKTOK + INSTAGRAM)
         # ========================================================
-        if not ZERNIO_API_KEY:
-            print("⚠️ ZERNIO_API_KEY no configurat.")
+        if not ZERNIO_API_KEY or not ZERNIO_TIKTOK_ACCOUNT_ID or not ZERNIO_INSTAGRAM_ACCOUNT_ID:
+            print("⚠️ Faltan claus o Account IDs de Zernio per configurar.")
             return
 
         public_urls = get_public_image_urls(temp_files)
-        print("📤 Enviant carrousel a Zernio (TikTok)...")
+        print("📤 Enviant carrousel a Zernio (TikTok + Instagram)...")
 
-        if post_to_zernio(ZERNIO_API_KEY, public_urls, raw_title, description):
-            telegram_msg = f"🚀 <b>{post_id} publicat amb èxit a TikTok!</b>\n\n📖 {html.escape(raw_title)}"
+        if post_to_zernio(ZERNIO_API_KEY, ZERNIO_TIKTOK_ACCOUNT_ID, ZERNIO_INSTAGRAM_ACCOUNT_ID, public_urls, raw_title, description):
+            telegram_msg = f"🚀 <b>{post_id} publicat amb èxit a TikTok i Instagram!</b>\n\n📖 {html.escape(raw_title)}"
             send_telegram_media_group(telegram_msg, temp_files)
 
         commit_repo_files([csv_relpath, state_relpath], f"chore: {post_id} -> Done ({post_type})")
