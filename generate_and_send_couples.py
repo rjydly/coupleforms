@@ -335,15 +335,13 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
 
     clean_title = title.strip()
 
-    # 1. TikTok Photo Mode només admet un màxim de 90 caràcters
+    # TikTok Photo Mode: màxim 90 caràcters
     if len(clean_title) > 90:
         tiktok_content = clean_title[:87] + "..."
     else:
         tiktok_content = clean_title
 
-    # 2. Instagram admet text llarg (Títol + Descripció + Hashtags)
     instagram_content = f"{clean_title}\n\n{caption}"
-
     media_items = [{"type": "image", "url": url} for url in image_urls]
 
     payload = {
@@ -351,24 +349,28 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
             {
                 "platform": "tiktok",
                 "accountId": tiktok_account_id,
-                "content": tiktok_content  # 👈 Text curt per a TikTok (<= 90 caràcters)
+                "content": tiktok_content,
+                "tiktokOptions": {         # 👈 Clau en camelCase
+                    "autoAddMusic": True   # 👈 Activa la música automàtica a TikTok
+                }
             },
             {
                 "platform": "instagram",
                 "accountId": instagram_account_id,
-                "content": instagram_content  # 👈 Text complet per a Instagram
+                "content": instagram_content
             }
         ],
-        "content": tiktok_content,  # 👈 Fallback global integrat per passar la validació de TikTok
+        "content": tiktok_content,
         "mediaItems": media_items,
         "publishNow": True,
-        "tiktok_options": {
-            "auto_add_music": True
+        "tiktokOptions": {                  # 👈 Fallback global en camelCase
+            "autoAddMusic": True
         }
     }
 
     try:
-        response = requests.post(zernio_url, headers=headers, json=payload, timeout=30)
+        # Augmentem el timeout a 120 segons per donar temps a publicar a ambdues xarxes
+        response = requests.post(zernio_url, headers=headers, json=payload, timeout=120)
         if response.status_code in (200, 201):
             print("✅ Carrousel enviat i publicat amb èxit a Zernio (TikTok + Instagram)!")
             return True
