@@ -3,7 +3,7 @@
                   CoupleForms / FormFriends Couples Bot
 ===============================================================================
 Data d'actualització: Agost 2026
-Versió del Sistema: 4.3 (Carrousels d'Imatges + 5 CSVs de Reels amb Àudio Romàntic Freesound v2, Pexels HD, Text Shadow i Transicions Blackfade)
+Versió del Sistema: 4.4 (Carrousels via Zernio API v1 [TikTok Photo Mode + IG] + 5 CSVs de Reels amb Àudio Romàntic Freesound v2, Pexels HD, Text Shadow i Transicions Blackfade)
 Estat del Sistema: Producció / Actiu
 Repositori Target: https://github.com/[user]/coupleforms
 
@@ -14,8 +14,8 @@ CoupleForms és una canalització d'automatització d'extrem a extrem (End-to-En
 
 El seu objectiu és la generació automàtica i publicació de contingut de doble format enfocat al nínxol de parelles ("Couples") per a Instagram i TikTok, dirigint el tràfic cap a la plataforma web `formfriends.com`:
 
-1. Carrousels d'Imatges (1080x1080, 6 slides): Estil retro 35mm amb preguntes profundes i tests de parella (100 registres a `posts.csv` i `posts_test.csv`).
-2. Vídeos / Reels / TikToks (1080x1920, 9:16): Fons de paisatges naturals HD de Pexels, canviant cada ~4s amb transicions de fosa a negre, un marc quadrat retro centrat (1080x1080 a Y=420), contingut dinàmic llegible amb ombra de text i **música romàntica de fons descarregada automàticament via Freesound.org API v2** (150 registres repartits en 5 CSVs).
+1. Carrousels d'Imatges (1080x1080, 6 slides): Estil retro 35mm amb preguntes profundes i tests de parella (100 registres a `posts.csv` i `posts_test.csv`). Publicació directa i immediata a TikTok i Instagram via **Zernio API v1**.
+2. Vídeos / Reels / TikToks (1080x1920, 9:16): Fons de paisatges naturals HD de Pexels, canviant cada ~4s amb transicions de fosa a negre, un marc quadrat retro centrat (1080x1080 a Y=420), contingut dinàmic llegible amb ombra de text i música romàntica de fons descarregada automàticament via **Freesound.org API v2** (150 registres repartits en 5 CSVs).
 
 -------------------------------------------------------------------------------
 2. ESTRUCTURA DE FITXERS I DIRECTORIS
@@ -27,14 +27,14 @@ El seu objectiu és la generació automàtica i publicació de contingut de dobl
 │       └── reels_workflow.yml      # Workflow per als vídeos (Reels / TikTok)
 ├── public_slides/                  # Directori de sortida per a imatges (.jpg)
 ├── public_videos/                  # Directori de sortida per a vídeos (.mp4)
-├── videos/                         # Subcarpeta amb els CSVs per als 5 tipus de reels (30 posts cadascun):
+├── videos/                         # Subcarpeta amb els CSVs per als 5 tipus de reels:
 │   ├── video_phrases.csv           # Tipus 1: Frase central (100 registres)
 │   ├── video_questions.csv         # Tipus 2: Carousel de 3 preguntes (30 registres)
 │   ├── video_tests.csv             # Tipus 3: Test You / Me (30 registres)
 │   ├── video_povs.csv              # Tipus 4: POV nota poètica (30 registres)
 │   └── video_checklists.csv        # Tipus 5: Checklist d'items (30 registres)
-├── generate_and_send_couples.py    # Script principal per a carrousels d'imatges
-├── generate_and_send_reels.py      # Script principal per a generació de vídeo amb àudio de Freesound
+├── generate_and_send_couples.py    # Script principal per a carrousels d'imatges (Integrat amb Zernio)
+├── generate_and_send_reels.py      # Script principal per a vídeo amb àudio de Freesound
 ├── posts.csv                       # CSV de carrousels tipus 'Question'
 ├── posts_test.csv                  # CSV de carrousels tipus 'Test'
 ├── next_post_type.txt              # Fitxer d'estat per a alternança de carrousels
@@ -53,57 +53,138 @@ El seu objectiu és la generació automàtica i publicació de contingut de dobl
 - Filtre Retro 35mm: Baixada de contrast (0.85), transformació de matriu de color vintage (Sepia càlid) i foscor (0.42) amb marc negre exterior arrodonit (radi=60, margin=28) integrat per màscara de difuminat (blur_r=10).
 - Fonts: Playfair Display per als títols/preguntes i Poppins Medium per al footer (`coupleforms`).
 - Font de dades: Intercala automàticament entre `posts.csv` i `posts_test.csv` registrant l'estat a `next_post_type.txt`.
+- Hosting d'imatges: Pujada automàtica de les diapositives via FTP (`formfriends.com/public_slides/`) o fallback a Raw GitHub URLs per tal que Zernio pugui accedir a les URLs públiques directes.
 
 -------------------------------------------------------------------------------
 4. CANALITZACIÓ 2: VÍDEOS / REELS / TIKTOKS (generate_and_send_reels.py)
 -------------------------------------------------------------------------------
 - Canvas de vídeo: 1080 x 1920 píxels (Format vertical 9:16), H.264 MP4 a 24 fps amb pista d'àudio AAC.
 - Estètica del marc: Fons negre pur (`ColorClip`) amb vídeo retallat exactament a un quadrat centrat de 1080x1080 a Y=420. Barres superiors i inferiors 100% negres opaques.
-- Font de Vídeo de Fons: Pexels Video API (`https://api.pexels.com/videos/search`), filtrat per alta resolució (`min_width=1080`, `min_height=1080`) i cerques de paisatges naturals ("scenic nature landscape", "peaceful ocean sunset", "calm forest trees", etc.).
-- **Música de Fons Romàntica (Freesound.org API v2)**: 
-  - Utilitza la clau d'API `FREESOUND_API_KEY` per consultar l'endpoint `https://freesound.org/apiv2/search/text/`.
-  - Cerca automàtica de pistes d'alta qualitat ("romantic piano soft", "soft acoustic guitar romantic", "peaceful piano romance", etc.) filtrant durades de 10 a 120 segons.
-  - Descarrega la previsualització MP3 en alta definició (`preview-hq-mp3`).
-  - processament amb MoviePy: Reducció de volum al 25% (`volumex(0.25)`), ajustament de durada (bucle si és curta o retallada si és llarga) i fade-out d'àudio de 0.8s al final.
-- Engine de Renderització: PIL (Pillow) genera capes PNG transparents amb el marc retro, text centrat i ombra fosca darrere de cada lletra (`draw_text_centered_with_shadow`) per garantir llegibilitat sobre qualsevol fons de vídeo. MoviePy ensambla les capes i l'àudio.
-
-Tipus de Reels i Esquema de CSVs (Rotació automàtica o selecció via `FORCE_TYPE`):
-1. `type1` (videos/video_phrases.csv - 100 posts): Frase d'amor central única (8 segons).
-   Schema: `Video_ID, Phrase, Status`
-2. `type2` (videos/video_questions.csv - 30 posts): Carousel de 3 preguntes seqüencials (14 segons).
-   Schema: `Video_ID, Title, Question_1, Question_2, Question_3, Status`
-3. `type3` (videos/video_tests.csv - 30 posts): Test A/B ràpid amb pregunta central i opcions fixes "A) You" / "B) Me" (9 segons).
-   Schema: `Video_ID, Question, Status`
-4. `type4` (videos/video_povs.csv - 30 posts): POV o nota poètica de frase única fixa (10 segons).
-   Schema: `Video_ID, Phrase, Status`
-5. `type5` (videos/video_checklists.csv - 30 posts): Checklist de 4 punts animats amb guions `-` (12 segons).
-   Schema: `Video_ID, Title, Item_1, Item_2, Item_3, Item_4, Status`
+- Font de Vídeo de Fons: Pexels Video API (`https://api.pexels.com/videos/search`), filtrat per alta resolució (`min_width=1080`, `min_height=1080`) i cerques de paisatges naturals.
+- Música de Fons Romàntica (Freesound.org API v2): Cerca automàtica de pistes d'alta qualitat, descàrrega de `preview-hq-mp3`, reducció de volum al 25% (`volumex(0.25)`), ajustament de durada i fade-out d'àudio de 0.8s.
+- Engine de Renderització: PIL (Pillow) genera capes PNG transparents amb el marc retro, text centrat i ombra fosca (`draw_text_centered_with_shadow`). MoviePy ensambla les capes i l'àudio.
 
 -------------------------------------------------------------------------------
-5. MODES D'EXECUCIÓ, TEST MODE I TELEGRAM INTEGRATION
+5. ESPECIFICACIÓ TÈCNICA DE L'API DE ZERNIO (TIKTOK + INSTAGRAM)
 -------------------------------------------------------------------------------
-Tots dos scripts incorporen la configuració per entorn de `TEST_MODE`:
+Endpoint de publicació: `POST https://zernio.com/api/v1/posts`
 
-- Si `TEST_MODE = True`:
-  - S'omet la publicació a la xarxa social via Buffer.
-  - S'envia el contingut directament a Telegram via Telegram Bot API per a la seva revisió:
-    - Carrousels: Envia l'àlbum de les 6 diapositives via `sendMediaGroup`.
-    - Reels: Envia el fitxer de vídeo `.mp4` amb àudio via `sendVideo`.
-  - Es marca la fila com a 'Done' al CSV i es fa commit/push automàtic amb `git pull --rebase` a Git per mantenir la persistència de dades.
+Normes i requeriments estrictes del Payload JSON per a evitar errors de publicació:
 
-- Si `TEST_MODE = False`:
-  - Publica automàticament a través de Buffer GraphQL API.
-  - Envia confirmació i còpia del mitjà a Telegram.
-  - Actualitza el CSV i fa commit/push a Git.
+1. Estructura de Plataformes (`platforms`):
+   - Ha de ser una llista d'objectes (NO matrius de strings simples).
+   - Cada objecte ha de contenir `platform` ("tiktok" o "instagram") i el seu respectiu `accountId`.
+   - Permet definir `content` personalitzat per plataforma.
+
+2. Gestió de Límit de Caràcters (TikTok Photo Mode Cap):
+   - TikTok Photo Mode utilitza el contingutcom a títol del carrousel i imposa un LÍMIT DIRECTE DE 90 CARÀCTERS.
+   - El camp `content` per a TikTok s'ha de retallar a un màxim de 90 caràcters (`title[:87] + "..."`).
+   - Instagram pot rebre el contingut complet amb descripció i hashtags (`title + "\n\n" + caption`).
+
+3. Format d'Imatges (`mediaItems`):
+   - Requereix un array d'objectes amb l'estructura `[{"type": "image", "url": "https://..."}]`.
+   - Per a compatibilitat amb la API REST i SDKs de Zernio, s'envien les claus `mediaItems` i `media_items`.
+
+4. Activació d'Àudio Automàtic i Permisos de TikTok:
+   - TikTok exigeix declaració explícita de consentiment per aplicar so automàtic.
+   - S'han d'incloure els paràmetres:
+     - `auto_add_music` / `autoAddMusic`: True
+     - `privacy_level`: "PUBLIC_TO_EVERYONE"
+     - `media_type`: "photo"
+     - `photo_cover_index`: 0
+     - `content_preview_confirmed`: True
+     - `express_consent_given`: True
+
+5. Publicació Immediata vs Drafts:
+   - S'ha d'incloure `"publishNow": True` (o `publish_now: True`). Si no s'inclou, Zernio desa el post com a esborrany i no el publica.
+
+6. Timeout de Xarxa:
+   - La petició HTTP requereix un `timeout=120` segons. Temps inferiors (com 30s) poden produir un `Read timed out` a Python mentre Zernio processa les imatges a ambdues plataformes.
 
 -------------------------------------------------------------------------------
-6. VARIABLES D'ENTORN I SECRETS DE GITHUB
+6. EXEMPLE PRÀCTIC DE CODI (IMPLEMENTACIÓ ZERNIO EN PYTHON)
 -------------------------------------------------------------------------------
-- `PEXELS_API_KEY`: Clau d'API de Pexels per a la descàrrega de vídeos de fons HD.
-- `FREESOUND_API_KEY`: Clau d'API de Freesound.org v2 per a la descàrrega de pistes de música romàntica.
-- `TELEGRAM_BOT_TOKEN`: Token del bot de Telegram.
-- `TELEGRAM_CHAT_ID`: ID del xat/canal de Telegram on es reben les proves/revisions.
-- `GEMINI_API_KEY`: Clau de Google AI Studio per a la generació d'imatges via Imagen 3.
-- `BUFFER_ACCESS_TOKEN`: Token d'accés de Buffer per a la publicació automàtica.
-- `GITHUB_TOKEN`: Proporcionat automàticament per GitHub Actions (`permissions: contents: write`).
-===============================================================================
+Aquest és el fragment exacte de codi utilitzat a `generate_and_send_couples.py`:
+
+```python
+import requests
+
+def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls, title, caption):
+    """
+    Publica un carrousel d'imatges immediatament a TikTok i Instagram via Zernio API,
+    respectant el límit de 90 caràcters de TikTok i activant la música automàtica.
+    """
+    if not image_urls:
+        print("❌ Error: La llista d'URLs d'imatges està buida.")
+        return False
+
+    zernio_url = "[https://zernio.com/api/v1/posts](https://zernio.com/api/v1/posts)"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    clean_title = title.strip()
+
+    # 1. Ajust de text per al límit de 90 caràcters de TikTok Photo Mode
+    if len(clean_title) > 90:
+        tiktok_content = clean_title[:87] + "..."
+    else:
+        tiktok_content = clean_title
+
+    # 2. Text complet per a Instagram (Títol + Descripció + Hashtags)
+    instagram_content = f"{clean_title}\n\n{caption}"
+
+    # 3. Format d'objectes multimèdia
+    media_items = [{"type": "image", "url": url} for url in image_urls]
+
+    # 4. Paràmetres complets de configuració i consentiment per a TikTok
+    tiktok_settings_payload = {
+        "privacy_level": "PUBLIC_TO_EVERYONE",
+        "allow_comment": True,
+        "media_type": "photo",
+        "photo_cover_index": 0,
+        "description": instagram_content,
+        "auto_add_music": True,
+        "autoAddMusic": True,
+        "content_preview_confirmed": True,
+        "express_consent_given": True
+    }
+
+    # 5. Payload global
+    payload = {
+        "content": tiktok_content,
+        "media_items": media_items,
+        "mediaItems": media_items,
+        "platforms": [
+            {
+                "platform": "tiktok",
+                "accountId": tiktok_account_id,
+                "content": tiktok_content,
+                "tiktok_settings": tiktok_settings_payload,
+                "tiktokSettings": tiktok_settings_payload
+            },
+            {
+                "platform": "instagram",
+                "accountId": instagram_account_id,
+                "content": instagram_content
+            }
+        ],
+        "tiktok_settings": tiktok_settings_payload,
+        "tiktokSettings": tiktok_settings_payload,
+        "publish_now": True,
+        "publishNow": True
+    }
+
+    try:
+        # Timeout de 120 segons per evitar Read timed out durant el processament doble
+        response = requests.post(zernio_url, headers=headers, json=payload, timeout=120)
+        if response.status_code in (200, 201):
+            print("✅ Carrousel enviat i publicat amb èxit a Zernio (TikTok + Instagram)!")
+            return True
+        else:
+            print(f"❌ Error en publicar a Zernio ({response.status_code}): {response.text}")
+            return False
+    except Exception as e:
+        print(f"⚠️ Excepció en comunicar amb Zernio: {e}")
+        return False
