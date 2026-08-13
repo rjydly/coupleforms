@@ -318,7 +318,7 @@ def commit_repo_files(paths, message):
         return False
 
 def post_to_zernio(api_key, image_urls, title, caption):
-    """Publica un carrousel d'imatges a TikTok via Zernio API amb auto-música i límit de 90 caràcters al títol."""
+    """Publica un carrousel d'imatges a TikTok i Instagram via Zernio API"""
     zernio_url = "https://zernio.com/api/v1/posts"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -331,20 +331,23 @@ def post_to_zernio(api_key, image_urls, title, caption):
         clean_title = clean_title[:87] + "..."
 
     payload = {
-        "platforms": ["tiktok"],
+        "platforms": [
+            {"platform": "tiktok"},
+            {"platform": "instagram"}  # 👈 Afegit Instagram
+        ],
         "type": "carousel",
         "media_urls": image_urls,
-        "title": clean_title,  # Títol obligatori (màx 90 caràcters)
-        "caption": caption,    # Descripció secundària / Hashtags
+        "title": clean_title,
+        "caption": caption,
         "tiktok_options": {
-            "auto_add_music": True  # Activa la música automàtica
+            "auto_add_music": True  # S'aplica només a TikTok
         }
     }
 
     try:
         response = requests.post(zernio_url, headers=headers, json=payload, timeout=30)
         if response.status_code in (200, 201):
-            print("✅ Carrousel enviat amb èxit a Zernio (TikTok)!")
+            print("✅ Carrousel enviat amb èxit a Zernio (TikTok + Instagram)!")
             return True
         else:
             print(f"❌ Error en publicar a Zernio ({response.status_code}): {response.text}")
