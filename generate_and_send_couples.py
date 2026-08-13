@@ -294,7 +294,7 @@ def send_telegram_media_group(message, photo_paths):
         print(f"⚠️ Error enviant àlbum a Telegram: {e}")
 
 def post_to_zernio(media_urls, caption):
-    """Detecta els comptes connectats a Zernio i publica el contingut immediatament."""
+    """Detecta els comptes connectats a Zernio i publica el contingut amb el format oficial mediaItems."""
     if not ZERNIO_API_KEY:
         print("⚠️ ZERNIO_API_KEY no configurada.")
         return False
@@ -304,7 +304,7 @@ def post_to_zernio(media_urls, caption):
         "Content-Type": "application/json"
     }
 
-    # 1. Carregar automàticament tots els comptes socials connectats al teu Panell de Zernio
+    # 1. Carregar automàticament tots els comptes socials connectats a Zernio
     platforms_payload = []
     try:
         acc_url = "https://zernio.com/api/v1/accounts"
@@ -333,11 +333,20 @@ def post_to_zernio(media_urls, caption):
         print(f"⚠️ Error de connexió carregant comptes de Zernio: {e}")
         return False
 
-    # 2. Publicar a tots els comptes detectats
+    # 2. Construir l'estructura mediaItems oficial de Zernio
+    media_items = []
+    for url in media_urls:
+        is_video = url.lower().endswith('.mp4') or 'video' in url.lower()
+        media_items.append({
+            "url": url,
+            "type": "video" if is_video else "image"
+        })
+
     post_url = "https://zernio.com/api/v1/posts"
     payload = {
         "content": caption,
         "caption": caption,
+        "mediaItems": media_items,
         "mediaUrls": media_urls,
         "media": media_urls,
         "platforms": platforms_payload,
@@ -359,7 +368,6 @@ def post_to_zernio(media_urls, caption):
     except Exception as e:
         print(f"⚠️ Error de connexió amb Zernio: {e}")
         return False
-
 
 def upload_via_ftp(file_path):
     if not (FTP_HOST and FTP_USER and FTP_PASS):
