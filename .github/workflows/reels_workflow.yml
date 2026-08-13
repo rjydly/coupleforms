@@ -1,13 +1,12 @@
 name: Generate and Send Reels
 
 on:
-  workflow_dispatch: # Permet executar-lo manualment des del botó "Run workflow" de GitHub
   schedule:
-    - cron: '0 12 * * *'  # S'executa a les 12:00 UTC (14:00h hora catalana)
-    - cron: '0 18 * * *'  # S'executa a les 18:00 UTC (20:00h hora catalana)
+    - cron: '0 15 * * *'  # S'executa automàticament cada dia a les 15:00 UTC (17:00 hora catalana)
+  workflow_dispatch:        # Permet executar-lo manualment des del botó 'Run workflow' a GitHub Actions
 
 permissions:
-  contents: write # Permís essencial per fer git commit/push de l'estat dels CSVs
+  contents: write           # Permís essencial per fer git commit/push de l'estat dels CSVs
 
 jobs:
   generate-and-send-reel:
@@ -17,7 +16,7 @@ jobs:
       - name: Checkout del Repositori
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Necessari per fer git commit/push sense errors de repositori superficial
+          fetch-depth: 0    # Necessari per fer git commit/push sense errors de repositori superficial
 
       - name: Configurar Python 3.10
         uses: actions/setup-python@v5
@@ -33,18 +32,15 @@ jobs:
       - name: Instal·lar Dependències de Python
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements.txt
 
       - name: Executar el Script de Generació de Reels
         env:
-          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-          FREESOUND_API_KEY: ${{ secrets.FREESOUND_API_KEY }}
+          FREESOUND_API_KEY: ${{ secrets.FREESOUND_API_KEY }}   # 👈 Clau d'API de Freesound afegida
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FTP_HOST: ${{ secrets.FTP_HOST }}
-          FTP_USER: ${{ secrets.FTP_USER }}
-          FTP_PASS: ${{ secrets.FTP_PASS }}
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python generate_and_send_reels.py
