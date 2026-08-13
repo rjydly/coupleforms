@@ -294,32 +294,59 @@ def send_telegram_media_group(message, photo_paths):
         print(f"⚠️ Error enviant àlbum a Telegram: {e}")
 
 def post_to_zernio(media_urls, caption):
-    """Envia el contingut a Zernio API i el publica immediatament a Instagram i TikTok."""
+    """Detecta els comptes connectats a Zernio i publica el contingut immediatament."""
     if not ZERNIO_API_KEY:
         print("⚠️ ZERNIO_API_KEY no configurada.")
         return False
 
-    url = "https://api.zernio.com/v1/posts"
     headers = {
         "Authorization": f"Bearer {ZERNIO_API_KEY}",
         "Content-Type": "application/json"
     }
 
+    # 1. Carregar automàticament tots els comptes socials connectats al teu Panell de Zernio
+    platforms_payload = []
+    try:
+        acc_url = "https://zernio.com/api/v1/accounts"
+        acc_res = requests.get(acc_url, headers=headers, timeout=15)
+        
+        if acc_res.status_code in (200, 201):
+            accounts_list = acc_res.json().get("accounts", [])
+            if not accounts_list:
+                print("⚠️ No s'ha trobat cap compte de xarxa social connectat a Zernio!")
+                return False
+            
+            for acc in accounts_list:
+                acc_id = acc.get("_id") or acc.get("accountId") or acc.get("id")
+                platform_name = acc.get("platform")
+                if acc_id and platform_name:
+                    platforms_payload.append({
+                        "platform": platform_name,
+                        "accountId": str(acc_id)
+                    })
+            print(f"🔗 Comptes detectats a Zernio: {[p['platform'] for p in platforms_payload]}")
+        else:
+            print(f"⚠️ Error carregant comptes de Zernio ({acc_res.status_code}): {acc_res.text}")
+            return False
+
+    except Exception as e:
+        print(f"⚠️ Error de connexió carregant comptes de Zernio: {e}")
+        return False
+
+    # 2. Publicar a tots els comptes detectats
+    post_url = "https://zernio.com/api/v1/posts"
     payload = {
         "content": caption,
         "caption": caption,
         "mediaUrls": media_urls,
         "media": media_urls,
-        "platforms": [
-            {"platform": "instagram"},
-            {"platform": "tiktok"}
-        ],
+        "platforms": platforms_payload,
         "publishNow": True
     }
 
     try:
-        print("📤 Enviant a Zernio API per a publicació immediata...")
-        res = requests.post(url, headers=headers, json=payload, timeout=30)
+        print("📤 Enviant contingut a Zernio API per a publicació immediata...")
+        res = requests.post(post_url, headers=headers, json=payload, timeout=30)
         print(f"ℹ️ Resposta Zernio Status Code: {res.status_code}")
         print(f"ℹ️ Resposta Zernio Body: {res.text}")
 
