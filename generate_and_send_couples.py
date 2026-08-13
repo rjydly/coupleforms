@@ -333,6 +333,9 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
     if len(clean_title) > 90:
         clean_title = clean_title[:87] + "..."
 
+    # Combinem el títol i la descripció per al text global de la publicació
+    full_content = f"{clean_title}\n\n{caption}"
+
     payload = {
         "platforms": [
             {
@@ -345,6 +348,7 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
             }
         ],
         "type": "carousel",
+        "content": full_content,    # 👈 AQUEST ÉS EL CAMP QUE DEMANA ZERNIO!
         "media_urls": image_urls,
         "title": clean_title,
         "caption": caption,
@@ -364,7 +368,6 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
     except Exception as e:
         print(f"⚠️ Excepció en comunicar amb Zernio: {e}")
         return False
-
 # ========================================================
 # LECTURA DE CSV I ALTERNANÇA DE TIPUS DE POST
 # ========================================================
