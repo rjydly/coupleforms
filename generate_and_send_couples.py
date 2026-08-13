@@ -43,7 +43,7 @@ FONT_SERIF_ITALIC_URL = "https://github.com/google/fonts/raw/main/ofl/playfairdi
 FONT_SANS_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Medium.ttf"
 
 # ENVS
-BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
+ZERNIO_API_KEY = os.getenv("ZERNIO_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Clau de Google AI Studio
@@ -325,50 +325,42 @@ def commit_repo_files(paths, message):
         print(f"⚠️ Error fent commit/push: {e}")
         return False
 
-def post_to_buffer(token, image_urls, caption):
-    buffer_url = "https://api.buffer.com"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    org_res = requests.post(buffer_url, headers=headers, json={"query": "query { account { organizations { id } } }"})
-    orgs = org_res.json().get("data", {}).get("account", {}).get("organizations", [])
-    if not orgs: return False
-
-    ch_res = requests.post(buffer_url, headers=headers, json={
-        "query": "query GetChannels($input: ChannelsInput!) { channels(input: $input) { id service displayName } }",
-        "variables": {"input": {"organizationId": orgs[0]["id"]}}
-    })
-    channels = ch_res.json().get("data", {}).get("channels", [])
-
-    assets = [{"image": {"url": url}} for url in image_urls]
-    mutation = """
-    mutation CreatePost($input: CreatePostInput!) {
-      createPost(input: $input) {
-        ... on PostActionSuccess { post { id } }
-        ... on MutationError { message }
-      }
+def post_to_zernio(api_key, image_urls, title, caption):
+    """Publica un carrousel d'imatges a TikTok via Zernio API amb auto-música i límit de 90 caràcters al títol."""
+    zernio_url = "https://zernio.com/api/v1/posts"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
     }
-    """
 
-    success = True
-    for ch in channels:
-        service = str(ch.get("service", "")).lower()
-        if "youtube" in service: continue
+    # Assegurem que el títol no superi els 90 caràcters permesos a TikTok Photo Mode
+    clean_title = title.strip()
+    if len(clean_title) > 90:
+        clean_title = clean_title[:87] + "..."
 
-        inp = {
-            "channelId": ch["id"],
-            "text": caption,
-            "schedulingType": "automatic",
-            "mode": "shareNow",
-            "assets": assets
+    payload = {
+        "platforms": ["tiktok"],
+        "type": "carousel",
+        "media_urls": image_urls,
+        "title": clean_title,  # Títol obligatori (màx 90 caràcters)
+        "caption": caption,    # Descripció secundària / Hashtags
+        "tiktok_options": {
+            "auto_add_music": True  # Activa la música automàtica
         }
-        if "instagram" in service:
-            inp["metadata"] = {"instagram": {"type": "post", "shouldShareToFeed": True}}
+    }
 
-        res = requests.post(buffer_url, headers=headers, json={"query": mutation, "variables": {"input": inp}})
-        if "errors" in res.json(): success = False
-
-    return success
-
+    try:
+        response = requests.post(zernio_url, headers=headers, json=payload, timeout=30)
+        if response.status_code in (200, 201):
+            print("✅ Carrousel enviat amb èxit a Zernio (TikTok)!")
+            return True
+        else:
+            print(f"❌ Error en publicar a Zernio ({response.status_code}): {response.text}")
+            return False
+    except Exception as e:
+        print(f"⚠️ Excepció en comunicar amb Zernio: {e}")
+        return False
+        
 # ========================================================
 # LECTURA DE CSV I ALTERNANÇA DE TIPUS DE POST
 # ========================================================
