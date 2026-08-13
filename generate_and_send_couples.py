@@ -293,8 +293,8 @@ def send_telegram_media_group(message, photo_paths):
     except Exception as e:
         print(f"⚠️ Error enviant àlbum a Telegram: {e}")
 
-def post_to_zernio(media_urls, caption):
-    """Detecta els comptes connectats a Zernio i publica el contingut amb el format oficial mediaItems."""
+def post_to_zernio(image_urls, caption):
+    """Detecta els comptes connectats a Zernio i publica el carrousel adaptant el títol al límit de TikTok."""
     if not ZERNIO_API_KEY:
         print("⚠️ ZERNIO_API_KEY no configurada.")
         return False
@@ -333,28 +333,32 @@ def post_to_zernio(media_urls, caption):
         print(f"⚠️ Error de connexió carregant comptes de Zernio: {e}")
         return False
 
-    # 2. Construir l'estructura mediaItems oficial de Zernio
-    media_items = []
-    for url in media_urls:
-        is_video = url.lower().endswith('.mp4') or 'video' in url.lower()
-        media_items.append({
-            "url": url,
-            "type": "video" if is_video else "image"
-        })
+    # 2. Per als carrousels de fotos, TikTok demana un títol de MÀXIM 90 caràcters
+    tiktok_safe_caption = caption
+    if len(caption) > 90:
+        # Agafem només la primera línia (el títol principal del post)
+        first_line = caption.split('\n')[0].strip()
+        if len(first_line) <= 90 and len(first_line) > 5:
+            tiktok_safe_caption = first_line
+        else:
+            tiktok_safe_caption = caption[:87] + "..."
+        print(f"✂️ Text adaptat per al límit de 90 caràcters de TikTok: '{tiktok_safe_caption}'")
+
+    media_items = [{"url": u, "type": "image"} for u in image_urls]
 
     post_url = "https://zernio.com/api/v1/posts"
     payload = {
-        "content": caption,
-        "caption": caption,
+        "content": tiktok_safe_caption,
+        "caption": tiktok_safe_caption,
         "mediaItems": media_items,
-        "mediaUrls": media_urls,
-        "media": media_urls,
+        "mediaUrls": image_urls,
+        "media": image_urls,
         "platforms": platforms_payload,
         "publishNow": True
     }
 
     try:
-        print("📤 Enviant contingut a Zernio API per a publicació immediata...")
+        print("📤 Enviant carrousel a Zernio API per a publicació immediata...")
         res = requests.post(post_url, headers=headers, json=payload, timeout=30)
         print(f"ℹ️ Resposta Zernio Status Code: {res.status_code}")
         print(f"ℹ️ Resposta Zernio Body: {res.text}")
