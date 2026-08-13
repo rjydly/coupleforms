@@ -16,7 +16,7 @@ from google.genai import types
 # ========================================================
 # CONFIGURACIÓ I RUTES
 # ========================================================
-TEST_MODE = False  # 🧪 Canvia a False per publicar realment a Zernio / Xarxes socials
+TEST_MODE = False  # 🧪 Canvia a False per publicar realment a Buffer / Xarxes socials
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -43,8 +43,7 @@ FONT_SERIF_ITALIC_URL = "https://github.com/google/fonts/raw/main/ofl/playfairdi
 FONT_SANS_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Medium.ttf"
 
 # ENVS
-ZERNIO_API_KEY = os.getenv("ZERNIO_API_KEY")
-ZERNIO_BASE_URL = "https://zernio.com/api/v1"
+BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Clau de Google AI Studio
@@ -326,82 +325,49 @@ def commit_repo_files(paths, message):
         print(f"⚠️ Error fent commit/push: {e}")
         return False
 
-def get_zernio_accounts(api_key):
-    """Llista els comptes de xarxes socials connectats a Zernio (equivalent als 'channels' de Buffer)."""
-    headers = {"Authorization": f"Bearer {api_key}"}
-    res = requests.get(f"{ZERNIO_BASE_URL}/accounts", headers=headers, timeout=30)
-    res.raise_for_status()
-    data = res.json()
-    return data.get("accounts", data if isinstance(data, list) else [])
+def post_to_buffer(token, image_urls, caption):
+    buffer_url = "https://api.buffer.com"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-def post_to_zernio(api_key, image_urls, caption):
-    """Publica el carrousel de 6 imatges a totes les xarxes connectades via Zernio (un únic
-    createPost multi-plataforma, en lloc del bucle per-canal que feia Buffer).
+    org_res = requests.post(buffer_url, headers=headers, json={"query": "query { account { organizations { id } } }"})
+    orgs = org_res.json().get("data", {}).get("account", {}).get("organizations", [])
+    if not orgs: return False
 
-    Per a TikTok, aquest carrousel es publica com a 'Photo Carousel' amb `auto_add_music: True`,
-    que és l'opció que li diu a TikTok que afegeixi automàticament música recomanada al post
-    (l'equivalent programàtic de prémer 'Add music' a l'app en pujar un carrousel de fotos).
-    """
-    if not api_key:
-        print("⚠️ ZERNIO_API_KEY no configurat.")
-        return False
+    ch_res = requests.post(buffer_url, headers=headers, json={
+        "query": "query GetChannels($input: ChannelsInput!) { channels(input: $input) { id service displayName } }",
+        "variables": {"input": {"organizationId": orgs[0]["id"]}}
+    })
+    channels = ch_res.json().get("data", {}).get("channels", [])
 
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-
-    try:
-        accounts = get_zernio_accounts(api_key)
-    except Exception as e:
-        print(f"⚠️ Error obtenint comptes de Zernio: {e}")
-        return False
-
-    platforms = []
-    has_tiktok = False
-    for acc in accounts:
-        service = str(acc.get("platform", "")).lower()
-        acc_id = acc.get("_id") or acc.get("id") or acc.get("accountId")
-        if not acc_id or "youtube" in service:
-            continue
-        platforms.append({"platform": service, "accountId": acc_id})
-        if service == "tiktok":
-            has_tiktok = True
-
-    if not platforms:
-        print("⚠️ Cap compte vàlid trobat a Zernio.")
-        return False
-
-    payload = {
-        "content": caption,
-        "mediaItems": [{"type": "image", "url": url} for url in image_urls],
-        "platforms": platforms,
-        "publishNow": True
+    assets = [{"image": {"url": url}} for url in image_urls]
+    mutation = """
+    mutation CreatePost($input: CreatePostInput!) {
+      createPost(input: $input) {
+        ... on PostActionSuccess { post { id } }
+        ... on MutationError { message }
+      }
     }
+    """
 
-    if has_tiktok:
-        # Camp especial de TikTok: va al nivell arrel del payload, no dins de platformSpecificData.
-        payload["tiktokSettings"] = {
-            "privacy_level": "PUBLIC_TO_EVERYONE",
-            "allow_comment": True,
-            "media_type": "photo",              # Carrousel de fotos (no vídeo)
-            "photo_cover_index": 0,
-            "description": caption[:4000],
-            "auto_add_music": True,             # 🎵 Àudio automàtic de TikTok al carrousel
-            "content_preview_confirmed": True,  # Requerit legalment per TikTok
-            "express_consent_given": True       # Requerit legalment per TikTok
+    success = True
+    for ch in channels:
+        service = str(ch.get("service", "")).lower()
+        if "youtube" in service: continue
+
+        inp = {
+            "channelId": ch["id"],
+            "text": caption,
+            "schedulingType": "automatic",
+            "mode": "shareNow",
+            "assets": assets
         }
+        if "instagram" in service:
+            inp["metadata"] = {"instagram": {"type": "post", "shouldShareToFeed": True}}
 
-    try:
-        res = requests.post(f"{ZERNIO_BASE_URL}/posts", headers=headers, json=payload, timeout=60)
-        data = res.json()
-    except Exception as e:
-        print(f"⚠️ Error de xarxa publicant a Zernio: {e}")
-        return False
+        res = requests.post(buffer_url, headers=headers, json={"query": mutation, "variables": {"input": inp}})
+        if "errors" in res.json(): success = False
 
-    if res.status_code >= 400 or data.get("error"):
-        print(f"⚠️ Error publicant a Zernio: {data.get('error', res.text)}")
-        return False
-
-    print(f"✅ Post publicat via Zernio (id: {data.get('post', {}).get('_id', 'n/a')}).")
-    return True
+    return success
 
 # ========================================================
 # LECTURA DE CSV I ALTERNANÇA DE TIPUS DE POST
@@ -565,7 +531,7 @@ def main():
         # ========================================================
         # MODE PROVA: NOMÉS ENVIAMENT A TELEGRAM
         # ========================================================
-        print("🧪 MODE PROVA ACTIVAT: S'omet Zernio. Enviant les 6 imatges a Telegram...")
+        print("🧪 MODE PROVA ACTIVAT: S'omet Buffer. Enviant les 6 imatges a Telegram...")
         title_text = html.escape(post_data.get('Slide_1_Title', ''))
         telegram_msg = (
             f"🧪 <b>[MODE PROVA] {post_id} generat ({post_type})</b>\n\n"
@@ -582,16 +548,16 @@ def main():
 
     else:
         # ========================================================
-        # MODE PRODUCCIÓ: PUBLICACIÓ A ZERNIO
+        # MODE PRODUCCIÓ: PUBLICACIÓ A BUFFER
         # ========================================================
-        if not ZERNIO_API_KEY:
-            print("⚠️ ZERNIO_API_KEY no configurat.")
+        if not BUFFER_ACCESS_TOKEN:
+            print("⚠️ BUFFER_ACCESS_TOKEN no configurat.")
             return
 
         public_urls = get_public_image_urls(temp_files)
-        print("📤 Enviant carrousel a Zernio (amb àudio automàtic per a TikTok)...")
+        print("📤 Enviant carrousel a Buffer...")
 
-        if post_to_zernio(ZERNIO_API_KEY, public_urls, caption):
+        if post_to_buffer(BUFFER_ACCESS_TOKEN, public_urls, caption):
             telegram_msg = f"🚀 <b>{post_id} publicat amb èxit!</b>\n\n📖 {html.escape(post_data.get('Slide_1_Title', ''))}"
             send_telegram_media_group(telegram_msg, temp_files)
 
