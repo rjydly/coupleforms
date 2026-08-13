@@ -293,8 +293,8 @@ def send_telegram_media_group(message, photo_paths):
     except Exception as e:
         print(f"⚠️ Error enviant àlbum a Telegram: {e}")
 
-def post_to_zernio(media_urls, caption):
-    """Envia el contingut a Zernio API per publicar a tots els comptes connectats."""
+def post_to_zernio(image_urls, caption):
+    """Envia el carrousel d'imatges a Zernio API i EL PUBLICA IMMEDIATAMENT."""
     if not ZERNIO_API_KEY:
         print("⚠️ ZERNIO_API_KEY no configurada.")
         return False
@@ -305,22 +305,23 @@ def post_to_zernio(media_urls, caption):
         "Content-Type": "application/json"
     }
 
-    # Si s'omet 'platforms', Zernio ho publica a tots els teus comptes enllaçats
+    # "publishNow": True evita que es quedi com a borrador i ho publica directament
     payload = {
-        "post": caption,
+        "content": caption,
         "caption": caption,
-        "mediaUrls": media_urls,
-        "media": media_urls
+        "mediaUrls": image_urls,
+        "media": image_urls,
+        "publishNow": True
     }
 
     try:
-        print("📤 Enviant a Zernio API...")
+        print("📤 Enviant carrousel a Zernio API per a publicació immediata...")
         res = requests.post(url, headers=headers, json=payload, timeout=30)
         print(f"ℹ️ Resposta Zernio Status Code: {res.status_code}")
         print(f"ℹ️ Resposta Zernio Body: {res.text}")
 
         if res.status_code in (200, 201):
-            print("✅ Enviat amb èxit a Zernio!")
+            print("🚀 Carrousel publicat amb èxit a través de Zernio!")
             return True
         else:
             print(f"⚠️ Error a Zernio ({res.status_code}): {res.text}")
@@ -328,7 +329,6 @@ def post_to_zernio(media_urls, caption):
     except Exception as e:
         print(f"⚠️ Error de connexió amb Zernio: {e}")
         return False
-
 
 def upload_via_ftp(file_path):
     if not (FTP_HOST and FTP_USER and FTP_PASS):
@@ -373,7 +373,7 @@ def commit_repo_files(paths, message):
         subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
         subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
         
-        # Fem git add de TOTS els canvis pendents per evitar errors de rebase
+        # Afegeix tots els fitxers modificats en disc abans del pull --rebase
         subprocess.run(["git", "add", "."], check=True)
         
         commit_res = subprocess.run(["git", "commit", "-m", message], check=False)
@@ -383,7 +383,7 @@ def commit_repo_files(paths, message):
     except Exception as e:
         print(f"⚠️ Error fent commit/push: {e}")
         return False
-        
+
 # ========================================================
 # LECTURA DE CSV I ALTERNANÇA DE TIPUS DE POST
 # ========================================================
