@@ -321,7 +321,13 @@ def commit_repo_files(paths, message):
         return False
 
 def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls, title, caption):
-    """Publica un carrousel d'imatges immediatament a TikTok i Instagram via Zernio API"""
+    """Publica un carrousel d'imatges immediatament a TikTok i Instagram via Zernio API."""
+    
+    # Validation prèvia per evitar enviar peticions sense imatges
+    if not image_urls:
+        print("❌ Error: La llista d'URLs d'imatges està buida.")
+        return False
+
     zernio_url = "https://zernio.com/api/v1/posts"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -333,7 +339,11 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
     if len(clean_title) > 90:
         clean_title = clean_title[:87] + "..."
 
+    # Text principal requerit per Zernio
     full_content = f"{clean_title}\n\n{caption}"
+
+    # Convertim l'array d'URLs al format exacte "mediaItems" que exigeix l'API
+    media_items = [{"type": "image", "url": url} for url in image_urls]
 
     payload = {
         "platforms": [
@@ -346,12 +356,11 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
                 "accountId": instagram_account_id
             }
         ],
-        "type": "carousel",
         "content": full_content,
-        "media_urls": image_urls,
         "title": clean_title,
         "caption": caption,
-        "publishNow": True,  # 👈 Aquest camp obliga a Zernio a publicar-ho ara mateix
+        "mediaItems": media_items,  # 👈 Clau corregida per a TikTok/Instagram (CamelCase + objectes)
+        "publishNow": True,         # 👈 Publicació immediata (evita que quedi com a draft)
         "tiktok_options": {
             "auto_add_music": True
         }
