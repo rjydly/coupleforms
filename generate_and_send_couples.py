@@ -16,7 +16,7 @@ from google.genai import types
 # ========================================================
 # CONFIGURACIÓ I RUTES
 # ========================================================
-TEST_MODE = False  # 🧪 Canvia a False per publicar realment a Buffer / Xarxes socials
+TEST_MODE = False  # 🧪 Canvia a False per publicar realment a Zernio (TikTok) / Xarxes socials
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -52,7 +52,7 @@ FTP_HOST = os.getenv("FTP_HOST")
 FTP_USER = os.getenv("FTP_USER")
 FTP_PASS = os.getenv("FTP_PASS")
 
-# Prompts estrictament SENSE PERSONES (Només paisatges i espais)
+# Prompts strictly SENSE PERSONES (Només paisatges i espais)
 PROMPT_POOL = [
     "completely empty scenic landscape, quiet sunset over calm ocean, vintage 35mm film photograph, warm golden hour, soft film grain, deserted, no humans, no people, no silhouettes",
     "empty cozy balcony overlooking a serene lake at twilight, warm dim fairy lights, retro 35mm analog photo, vintage muted tones, no people, no humans",
@@ -132,21 +132,18 @@ def apply_retro_filters_and_frame(bg_img):
     )
     img_warm = img_fade.convert('RGB', warm_matrix)
 
-    # 3. Fosc per garantir la llegibilitat del text blanc (brillantor reduïda per destacar el text)
+    # 3. Fosc per garantir la llegibilitat del text blanc
     brightness_enhancer = ImageEnhance.Brightness(img_warm)
     dark_bg = brightness_enhancer.enhance(0.42)
 
-    # 4. Marc exterior 100% negre amb un blackfade estret a la vora (sense línia de contorn visible).
-    # Tècnica: dibuixem la màscara interior MÉS GRAN que el marc real i després difuminem,
-    # de manera que la transició negre→imatge caigui exactament sobre la vora arrodonida
-    # sense deixar cap anell o línia de tall visible.
+    # 4. Marc exterior 100% negre amb un blackfade estret a la vora
     width, height = 1080, 1080
     frame = Image.new('RGBA', (width, height), (0, 0, 0, 255))
 
-    blur_r   = 10   # radi de difuminat (píxels de transició)
-    margin   = 28   # vora negra visible (reduïda respecte a l'anterior)
+    blur_r   = 10   # radi de difuminat
+    margin   = 28   # vora negra visible
     radius   = 60   # arrodoniment de cantonades
-    inner_m  = margin - blur_r  # interior de la màscara desplaçat cap enfora perquè el blur centri la transició a 'margin'
+    inner_m  = margin - blur_r
 
     mask = Image.new('L', (width, height), 0)
     draw_mask = ImageDraw.Draw(mask)
@@ -304,12 +301,7 @@ def get_public_image_urls(temp_files):
     raise Exception("❌ Sense URL pública.")
 
 def commit_repo_files(paths, message):
-    """Fa `git add` només dels paths indicats, commit i push.
-    S'utilitza tant per pujar imatges com -crucialment- per persistir els canvis
-    d'Status als CSV i al fitxer d'estat d'alternança; sense això, el workflow
-    reprocessaria sempre la mateixa fila 'Pending' perquè cada run parteix
-    d'un checkout net del repositori.
-    """
+    """Fa `git add` només dels paths indicats, commit i push."""
     repo = os.getenv("GITHUB_REPOSITORY")
     if not repo:
         print("ℹ️ No s'ha detectat GITHUB_REPOSITORY: s'omet el commit (execució local).")
@@ -360,14 +352,12 @@ def post_to_zernio(api_key, image_urls, title, caption):
     except Exception as e:
         print(f"⚠️ Excepció en comunicar amb Zernio: {e}")
         return False
-        
+
 # ========================================================
 # LECTURA DE CSV I ALTERNANÇA DE TIPUS DE POST
 # ========================================================
 
 def read_csv_safe(csv_path):
-    """Lectura defensiva d'un CSV: retorna (headers, rows) amb totes les files
-    completades a la mida de headers per evitar IndexError."""
     if not os.path.exists(csv_path):
         print(f"❌ Error: Fitxer CSV no trobat a {csv_path}")
         return None, None
@@ -389,7 +379,6 @@ def read_csv_safe(csv_path):
         print(f"❌ Error: No s'ha trobat la columna 'Status' a {csv_path}.")
         return None, None
 
-    status_idx = headers.index('Status')
     for r in rows:
         while len(r) < len(headers):
             r.append('')
@@ -410,8 +399,6 @@ def write_csv_safe(csv_path, headers, rows):
         writer.writerows(rows)
 
 def load_next_post_type():
-    """Llegeix quin tipus de post toca aquesta execució ('question' o 'test').
-    Si no existeix el fitxer d'estat (primera execució), es comença per 'question'."""
     if os.path.exists(STATE_PATH):
         with open(STATE_PATH, 'r', encoding='utf-8') as f:
             value = f.read().strip().lower()
@@ -424,9 +411,6 @@ def save_next_post_type(post_type):
         f.write(post_type)
 
 def pick_post_to_process():
-    """Determina quin CSV/tipus de post cal processar aquesta execució, alternant
-    entre 'question' i 'test'. Si el tipus que tocava no té cap fila 'Pending',
-    es prova amb l'altre tipus per no bloquejar el pipeline."""
     preferred_type = load_next_post_type()
     other_type = 'test' if preferred_type == 'question' else 'question'
 
@@ -504,7 +488,7 @@ def main():
         s.save(f_path, "JPEG", quality=95)
         temp_files.append(f_path)
 
-raw_title = post_data.get('Slide_1_Title', '')
+    raw_title = post_data.get('Slide_1_Title', '')
     tags = "#couples #relationshipgoals #deepquestions #couplesgame #formfriends"
     description = f"Tag your person and answer in the comments. ✨\n\nLink in bio to play formfriends.com\n\n—\n{tags}"
 
@@ -534,8 +518,7 @@ raw_title = post_data.get('Slide_1_Title', '')
         )
         send_telegram_media_group(telegram_msg, temp_files)
 
-        # Persistim SEMPRE el canvi d'Status i l'estat d'alternança al repositori,
-        # també en mode prova, o el pipeline es quedaria bloclat repetint el mateix post.
+        # Persistim SEMPRE el canvi d'Status i l'estat d'alternança al repositori
         commit_repo_files([csv_relpath, state_relpath], f"chore: {post_id} -> Done (mode prova, {post_type})")
         print(f"📝 CSV actualitzat (Mode Prova)! {post_id} -> Done. Proper tipus: {next_type}.")
 
@@ -556,6 +539,6 @@ raw_title = post_data.get('Slide_1_Title', '')
 
         commit_repo_files([csv_relpath, state_relpath], f"chore: {post_id} -> Done ({post_type})")
         print(f"📝 CSV actualitzat! {post_id} -> Done. Proper tipus: {next_type}.")
-        
+
 if __name__ == "__main__":
     main()
