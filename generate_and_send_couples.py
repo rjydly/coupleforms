@@ -323,7 +323,6 @@ def commit_repo_files(paths, message):
 def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls, title, caption):
     """Publica un carrousel d'imatges immediatament a TikTok i Instagram via Zernio API."""
     
-    # Validation prèvia per evitar enviar peticions sense imatges
     if not image_urls:
         print("❌ Error: La llista d'URLs d'imatges està buida.")
         return False
@@ -334,33 +333,35 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
         "Content-Type": "application/json"
     }
 
-    # Assegurem que el títol no superi els 90 caràcters permesos a TikTok Photo Mode
     clean_title = title.strip()
+
+    # 1. TikTok Photo Mode només admet un màxim de 90 caràcters
     if len(clean_title) > 90:
-        clean_title = clean_title[:87] + "..."
+        tiktok_content = clean_title[:87] + "..."
+    else:
+        tiktok_content = clean_title
 
-    # Text principal requerit per Zernio
-    full_content = f"{clean_title}\n\n{caption}"
+    # 2. Instagram admet text llarg (Títol + Descripció + Hashtags)
+    instagram_content = f"{clean_title}\n\n{caption}"
 
-    # Convertim l'array d'URLs al format exacte "mediaItems" que exigeix l'API
     media_items = [{"type": "image", "url": url} for url in image_urls]
 
     payload = {
         "platforms": [
             {
                 "platform": "tiktok",
-                "accountId": tiktok_account_id
+                "accountId": tiktok_account_id,
+                "content": tiktok_content  # 👈 Text curt per a TikTok (<= 90 caràcters)
             },
             {
                 "platform": "instagram",
-                "accountId": instagram_account_id
+                "accountId": instagram_account_id,
+                "content": instagram_content  # 👈 Text complet per a Instagram
             }
         ],
-        "content": full_content,
-        "title": clean_title,
-        "caption": caption,
-        "mediaItems": media_items,  # 👈 Clau corregida per a TikTok/Instagram (CamelCase + objectes)
-        "publishNow": True,         # 👈 Publicació immediata (evita que quedi com a draft)
+        "content": tiktok_content,  # 👈 Fallback global integrat per passar la validació de TikTok
+        "mediaItems": media_items,
+        "publishNow": True,
         "tiktok_options": {
             "auto_add_music": True
         }
