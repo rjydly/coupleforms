@@ -504,8 +504,9 @@ def main():
         s.save(f_path, "JPEG", quality=95)
         temp_files.append(f_path)
 
+raw_title = post_data.get('Slide_1_Title', '')
     tags = "#couples #relationshipgoals #deepquestions #couplesgame #formfriends"
-    caption = f"{post_data.get('Slide_1_Title', '')}\n\nTag your person and answer in the comments. ✨\n\nLink in bio to play formfriends.com\n\n—\n{tags}"
+    description = f"Tag your person and answer in the comments. ✨\n\nLink in bio to play formfriends.com\n\n—\n{tags}"
 
     # Marquem la fila com a 'Done' i l'escrivim sempre, independentment del mode,
     # perquè el següent run (test o producció) no la torni a agafar.
@@ -523,13 +524,13 @@ def main():
         # ========================================================
         # MODE PROVA: NOMÉS ENVIAMENT A TELEGRAM
         # ========================================================
-        print("🧪 MODE PROVA ACTIVAT: S'omet Buffer. Enviant les 6 imatges a Telegram...")
-        title_text = html.escape(post_data.get('Slide_1_Title', ''))
+        print("🧪 MODE PROVA ACTIVAT: S'omet Zernio. Enviant les 6 imatges a Telegram...")
+        title_text = html.escape(raw_title)
         telegram_msg = (
             f"🧪 <b>[MODE PROVA] {post_id} generat ({post_type})</b>\n\n"
             f"📖 <b>Títol:</b> {title_text}\n"
             f"🏷️ <b>Hashtags:</b> {tags}\n\n"
-            f"<i>No s'ha enviat a Buffer. Comprova les 6 diapositives a l'àlbum adjunt!</i>"
+            f"<i>No s'ha enviat a Zernio. Comprova les 6 diapositives a l'àlbum adjunt!</i>"
         )
         send_telegram_media_group(telegram_msg, temp_files)
 
@@ -540,21 +541,21 @@ def main():
 
     else:
         # ========================================================
-        # MODE PRODUCCIÓ: PUBLICACIÓ A BUFFER
+        # MODE PRODUCCIÓ: PUBLICACIÓ A ZERNIO (TIKTOK)
         # ========================================================
-        if not BUFFER_ACCESS_TOKEN:
-            print("⚠️ BUFFER_ACCESS_TOKEN no configurat.")
+        if not ZERNIO_API_KEY:
+            print("⚠️ ZERNIO_API_KEY no configurat.")
             return
 
         public_urls = get_public_image_urls(temp_files)
-        print("📤 Enviant carrousel a Buffer...")
+        print("📤 Enviant carrousel a Zernio (TikTok)...")
 
-        if post_to_buffer(BUFFER_ACCESS_TOKEN, public_urls, caption):
-            telegram_msg = f"🚀 <b>{post_id} publicat amb èxit!</b>\n\n📖 {html.escape(post_data.get('Slide_1_Title', ''))}"
+        if post_to_zernio(ZERNIO_API_KEY, public_urls, raw_title, description):
+            telegram_msg = f"🚀 <b>{post_id} publicat amb èxit a TikTok!</b>\n\n📖 {html.escape(raw_title)}"
             send_telegram_media_group(telegram_msg, temp_files)
 
         commit_repo_files([csv_relpath, state_relpath], f"chore: {post_id} -> Done ({post_type})")
         print(f"📝 CSV actualitzat! {post_id} -> Done. Proper tipus: {next_type}.")
-
+        
 if __name__ == "__main__":
     main()
