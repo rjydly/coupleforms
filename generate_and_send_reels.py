@@ -52,7 +52,7 @@ PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 FREESOUND_API_KEY = os.getenv("FREESOUND_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-ZERNIO_API_KEY = os.getenv("ZERNIO_API_KEY")
+BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
 
 CANVAS_W, CANVAS_H = 1080, 1920
 SQUARE_SIZE = 1080
@@ -707,7 +707,7 @@ def main():
         state_relpath = os.path.relpath(STATE_PATH, BASE_DIR)
 
         if TEST_MODE:
-            print("🧪 MODE PROVA ACTIVAT: S'omet Zernio. Enviant el vídeo a Telegram...")
+            print("🧪 MODE PROVA ACTIVAT: S'omet Buffer. Enviant el vídeo a Telegram...")
             telegram_caption = f"🧪 <b>[MODE PROVA - REEL] {video_id} ({post_type})</b>\n\n{caption}"
             send_telegram_video(output_video_path, telegram_caption)
             
@@ -715,7 +715,7 @@ def main():
             print(f"📝 CSV actualitzat a Git! {video_id} -> Done. Proper tipus: {next_type}.")
 
         else:
-            print("📤 MODE PRODUCCIÓ: Publicació a Zernio...")
+            print("📤 MODE PRODUCCIÓ: Publicació a Buffer...")
             send_telegram_video(output_video_path, f"🚀 <b>[PUBLICAT] {video_id}</b>\n\n{caption}")
             commit_repo_files([csv_relpath, state_relpath], f"chore: {video_id} -> Done ({post_type})")
 
