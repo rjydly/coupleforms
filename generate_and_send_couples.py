@@ -321,7 +321,7 @@ def commit_repo_files(paths, message):
         return False
 
 def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls, title, caption):
-    """Publica un carrousel d'imatges immediatament a TikTok i Instagram via Zernio API."""
+    """Publica un carrousel d'imatges a TikTok i Instagram via Zernio API amb tots els paràmetres de TikTok."""
     
     if not image_urls:
         print("❌ Error: La llista d'URLs d'imatges està buida.")
@@ -344,22 +344,29 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
     instagram_content = f"{clean_title}\n\n{caption}"
     media_items = [{"type": "image", "url": url} for url in image_urls]
 
-    # Configuració específica per a TikTok
-    tiktok_settings = {
-        "autoAddMusic": True,
-        "privacyLevel": "PUBLIC_TO_EVERYONE", # Necessari en moltes versions de l'API de TikTok
-        "disableComment": False,
-        "disableStitch": False,
-        "disableDuet": False
+    # Diccionari de configuració de TikTok basat en els docs oficials de Zernio
+    tiktok_settings_payload = {
+        "privacy_level": "PUBLIC_TO_EVERYONE",
+        "allow_comment": True,
+        "media_type": "photo",
+        "photo_cover_index": 0,
+        "description": instagram_content,
+        "auto_add_music": True,
+        "content_preview_confirmed": True,
+        "express_consent_given": True
     }
 
     payload = {
+        "content": tiktok_content,
+        "media_items": media_items,
+        "mediaItems": media_items,  # Suport doble REST/SDK
         "platforms": [
             {
                 "platform": "tiktok",
                 "accountId": tiktok_account_id,
                 "content": tiktok_content,
-                "tiktokOptions": tiktok_settings  # 👈 Opcions específiques de TikTok
+                "tiktok_settings": tiktok_settings_payload,
+                "tiktokSettings": tiktok_settings_payload
             },
             {
                 "platform": "instagram",
@@ -367,10 +374,10 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
                 "content": instagram_content
             }
         ],
-        "content": tiktok_content,
-        "mediaItems": media_items,
-        "publishNow": True,
-        "tiktokOptions": tiktok_settings  # 👈 Fallback global
+        "tiktok_settings": tiktok_settings_payload,
+        "tiktokSettings": tiktok_settings_payload,
+        "publish_now": True,
+        "publishNow": True
     }
 
     try:
