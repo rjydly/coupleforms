@@ -16,7 +16,7 @@ from google.genai import types
 # ========================================================
 # CONFIGURACIÓ I RUTES
 # ========================================================
-TEST_MODE = False  # 🧪 Canvia a False per publicar realment a Buffer / Xarxes socials
+TEST_MODE = False  # 🧪 Canvia a True per fer proves sense publicar a Zernio
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -43,7 +43,7 @@ FONT_SERIF_ITALIC_URL = "https://github.com/google/fonts/raw/main/ofl/playfairdi
 FONT_SANS_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Medium.ttf"
 
 # ENVS
-BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
+ZERNIO_API_KEY = os.getenv("ZERNIO_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Clau de Google AI Studio
@@ -132,21 +132,17 @@ def apply_retro_filters_and_frame(bg_img):
     )
     img_warm = img_fade.convert('RGB', warm_matrix)
 
-    # 3. Fosc per garantir la llegibilitat del text blanc (brillantor reduïda per destacar el text)
+    # 3. Fosc per garantir la llegibilitat del text blanc
     brightness_enhancer = ImageEnhance.Brightness(img_warm)
     dark_bg = brightness_enhancer.enhance(0.42)
 
-    # 4. Marc exterior 100% negre amb un blackfade estret a la vora (sense línia de contorn visible).
-    # Tècnica: dibuixem la màscara interior MÉS GRAN que el marc real i després difuminem,
-    # de manera que la transició negre→imatge caigui exactament sobre la vora arrodonida
-    # sense deixar cap anell o línia de tall visible.
     width, height = 1080, 1080
     frame = Image.new('RGBA', (width, height), (0, 0, 0, 255))
 
-    blur_r   = 10   # radi de difuminat (píxels de transició)
-    margin   = 28   # vora negra visible (reduïda respecte a l'anterior)
+    blur_r   = 10   # radi de difuminat
+    margin   = 28   # vora negra visible
     radius   = 60   # arrodoniment de cantonades
-    inner_m  = margin - blur_r  # interior de la màscara desplaçat cap enfora perquè el blur centri la transició a 'margin'
+    inner_m  = margin - blur_r
 
     mask = Image.new('L', (width, height), 0)
     draw_mask = ImageDraw.Draw(mask)
@@ -248,14 +244,36 @@ def draw_footer(draw, font_sans, width):
     tw = bbox[2] - bbox[0]
     draw.text(((width - tw) / 2, 920), text, fill=(255, 255, 255, 220), font=font_sans)
 
-def send_telegram_media_group(message, photo_paths):
-    """Envia l'àlbum de fotos complet (les 6 diapositives) a Telegram per a la revisió"""
+# ========================================================
+# TELEGRAM / ZERNIO / FTP / GIT
+# ========================================================
+
+def send_telegram_message(message):
+    """Envia un missatge de text informatiu a Telegram (per al Mode Producció)"""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("ℹ️ Telegram no configurat.")
         return
     try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                      data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'})
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'},
+            timeout=15
+        )
+        print("📲 Notificació enviada a Telegram!")
+    except Exception as e:
+        print(f"⚠️ Error enviant notificació a Telegram: {e}")
+
+def send_telegram_media_group(message, photo_paths):
+    """Envia l'àlbum de fotos complet a Telegram (per al Mode Prova / Revisió)"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("ℹ️ Telegram no configurat.")
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'},
+            timeout=15
+        )
 
         media = []
         files = {}
@@ -265,10 +283,45 @@ def send_telegram_media_group(message, photo_paths):
             files[file_key] = open(path, 'rb')
 
         payload = {'chat_id': TELEGRAM_CHAT_ID, 'media': json.dumps(media)}
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMediaGroup", data=payload, files=files)
-        print("📲 Àlbum complet de slides enviat a Telegram!")
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMediaGroup",
+            data=payload,
+            files=files,
+            timeout=30
+        )
+        print("📲 Àlbum complet de slides enviat a Telegram per a revisió!")
     except Exception as e:
         print(f"⚠️ Error enviant àlbum a Telegram: {e}")
+
+def post_to_zernio(image_urls, caption):
+    """Envia el carrousel d'imatges a Zernio API per a la seva publicació a xarxes"""
+    if not ZERNIO_API_KEY:
+        print("⚠️ ZERNIO_API_KEY no configurada.")
+        return False
+
+    url = "https://api.zernio.com/v1/posts"
+    headers = {
+        "Authorization": f"Bearer {ZERNIO_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "caption": caption,
+        "media": image_urls
+    }
+
+    try:
+        print("📤 Enviant carrousel a Zernio API...")
+        res = requests.post(url, headers=headers, json=payload, timeout=30)
+        if res.status_code in (200, 201):
+            print("✅ Carrousel publicat amb èxit a través de Zernio!")
+            return True
+        else:
+            print(f"⚠️ Error a Zernio ({res.status_code}): {res.text}")
+            return False
+    except Exception as e:
+        print(f"⚠️ Error de connexió amb Zernio: {e}")
+        return False
 
 def upload_via_ftp(file_path):
     if not (FTP_HOST and FTP_USER and FTP_PASS):
@@ -304,12 +357,7 @@ def get_public_image_urls(temp_files):
     raise Exception("❌ Sense URL pública.")
 
 def commit_repo_files(paths, message):
-    """Fa `git add` només dels paths indicats, commit i push.
-    S'utilitza tant per pujar imatges com -crucialment- per persistir els canvis
-    d'Status als CSV i al fitxer d'estat d'alternança; sense això, el workflow
-    reprocessaria sempre la mateixa fila 'Pending' perquè cada run parteix
-    d'un checkout net del repositori.
-    """
+    """Fa git add, commit, pull --rebase i push per persistir l'estat"""
     repo = os.getenv("GITHUB_REPOSITORY")
     if not repo:
         print("ℹ️ No s'ha detectat GITHUB_REPOSITORY: s'omet el commit (execució local).")
@@ -319,63 +367,18 @@ def commit_repo_files(paths, message):
         subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
         subprocess.run(["git", "add"] + list(paths), check=True)
         commit_res = subprocess.run(["git", "commit", "-m", message], check=False)
+        subprocess.run(["git", "pull", "--rebase"], check=False)
         subprocess.run(["git", "push"], check=False)
         return commit_res.returncode == 0
     except Exception as e:
         print(f"⚠️ Error fent commit/push: {e}")
         return False
 
-def post_to_buffer(token, image_urls, caption):
-    buffer_url = "https://api.buffer.com"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    org_res = requests.post(buffer_url, headers=headers, json={"query": "query { account { organizations { id } } }"})
-    orgs = org_res.json().get("data", {}).get("account", {}).get("organizations", [])
-    if not orgs: return False
-
-    ch_res = requests.post(buffer_url, headers=headers, json={
-        "query": "query GetChannels($input: ChannelsInput!) { channels(input: $input) { id service displayName } }",
-        "variables": {"input": {"organizationId": orgs[0]["id"]}}
-    })
-    channels = ch_res.json().get("data", {}).get("channels", [])
-
-    assets = [{"image": {"url": url}} for url in image_urls]
-    mutation = """
-    mutation CreatePost($input: CreatePostInput!) {
-      createPost(input: $input) {
-        ... on PostActionSuccess { post { id } }
-        ... on MutationError { message }
-      }
-    }
-    """
-
-    success = True
-    for ch in channels:
-        service = str(ch.get("service", "")).lower()
-        if "youtube" in service: continue
-
-        inp = {
-            "channelId": ch["id"],
-            "text": caption,
-            "schedulingType": "automatic",
-            "mode": "shareNow",
-            "assets": assets
-        }
-        if "instagram" in service:
-            inp["metadata"] = {"instagram": {"type": "post", "shouldShareToFeed": True}}
-
-        res = requests.post(buffer_url, headers=headers, json={"query": mutation, "variables": {"input": inp}})
-        if "errors" in res.json(): success = False
-
-    return success
-
 # ========================================================
 # LECTURA DE CSV I ALTERNANÇA DE TIPUS DE POST
 # ========================================================
 
 def read_csv_safe(csv_path):
-    """Lectura defensiva d'un CSV: retorna (headers, rows) amb totes les files
-    completades a la mida de headers per evitar IndexError."""
     if not os.path.exists(csv_path):
         print(f"❌ Error: Fitxer CSV no trobat a {csv_path}")
         return None, None
@@ -397,7 +400,6 @@ def read_csv_safe(csv_path):
         print(f"❌ Error: No s'ha trobat la columna 'Status' a {csv_path}.")
         return None, None
 
-    status_idx = headers.index('Status')
     for r in rows:
         while len(r) < len(headers):
             r.append('')
@@ -418,8 +420,6 @@ def write_csv_safe(csv_path, headers, rows):
         writer.writerows(rows)
 
 def load_next_post_type():
-    """Llegeix quin tipus de post toca aquesta execució ('question' o 'test').
-    Si no existeix el fitxer d'estat (primera execució), es comença per 'question'."""
     if os.path.exists(STATE_PATH):
         with open(STATE_PATH, 'r', encoding='utf-8') as f:
             value = f.read().strip().lower()
@@ -432,9 +432,6 @@ def save_next_post_type(post_type):
         f.write(post_type)
 
 def pick_post_to_process():
-    """Determina quin CSV/tipus de post cal processar aquesta execució, alternant
-    entre 'question' i 'test'. Si el tipus que tocava no té cap fila 'Pending',
-    es prova amb l'altre tipus per no bloquejar el pipeline."""
     preferred_type = load_next_post_type()
     other_type = 'test' if preferred_type == 'question' else 'question'
 
@@ -486,11 +483,11 @@ def main():
         d = ImageDraw.Draw(s)
 
         if i == 0:
-            # --- SLIDE 1: PORTADA (comuna a tots dos esquemes) ---
+            # --- SLIDE 1: PORTADA ---
             draw_title_with_underline(d, post_data.get('Slide_1_Title', ''), post_data.get('Highlight_Word', ''), font_serif_large, 1080, None)
 
         elif post_type == 'test':
-            # --- SLIDES 2-6: TEST, cadascuna amb la seva pròpia pregunta + opcions A-D ---
+            # --- SLIDES 2-6: TEST (pregunta + opcions A-D) ---
             q_text = post_data.get(f'Slide_{i+1}_Question', '')
             options = [
                 ('A) ', post_data.get(f'Slide_{i+1}_OptA', '')),
@@ -501,7 +498,7 @@ def main():
             draw_test_slide(d, q_text, options, font_serif_med, font_serif_italic, font_serif_med, 1080)
 
         else:
-            # --- SLIDES 2-6: QUESTION, preguntes normals sense opcions ---
+            # --- SLIDES 2-6: QUESTION (preguntes normals) ---
             key = 'Slide_2_Question_or_Title' if i == 1 else f'Slide_{i+1}_Question'
             q_text = post_data.get(key, '')
             draw_question_slide(d, q_text, font_serif_med, 1080)
@@ -515,12 +512,9 @@ def main():
     tags = "#couples #relationshipgoals #deepquestions #couplesgame #formfriends"
     caption = f"{post_data.get('Slide_1_Title', '')}\n\nTag your person and answer in the comments. ✨\n\nLink in bio to play formfriends.com\n\n—\n{tags}"
 
-    # Marquem la fila com a 'Done' i l'escrivim sempre, independentment del mode,
-    # perquè el següent run (test o producció) no la torni a agafar.
     rows[current_idx][status_idx] = 'Done'
     write_csv_safe(csv_path, headers, rows)
 
-    # Alternem el tipus per a la propera execució.
     next_type = 'test' if post_type == 'question' else 'question'
     save_next_post_type(next_type)
 
@@ -529,37 +523,45 @@ def main():
 
     if TEST_MODE:
         # ========================================================
-        # MODE PROVA: NOMÉS ENVIAMENT A TELEGRAM
+        # MODE PROVA: NOMÉS ENVIAMENT DE LES 6 IMATGES A TELEGRAM
         # ========================================================
-        print("🧪 MODE PROVA ACTIVAT: S'omet Buffer. Enviant les 6 imatges a Telegram...")
+        print("🧪 MODE PROVA ACTIVAT: S'omet Zernio. Enviant les 6 imatges a Telegram...")
         title_text = html.escape(post_data.get('Slide_1_Title', ''))
         telegram_msg = (
             f"🧪 <b>[MODE PROVA] {post_id} generat ({post_type})</b>\n\n"
             f"📖 <b>Títol:</b> {title_text}\n"
             f"🏷️ <b>Hashtags:</b> {tags}\n\n"
-            f"<i>No s'ha enviat a Buffer. Comprova les 6 diapositives a l'àlbum adjunt!</i>"
+            f"<i>No s'ha enviat a Zernio. Comprova les 6 diapositives a l'àlbum adjunt!</i>"
         )
         send_telegram_media_group(telegram_msg, temp_files)
 
-        # Persistim SEMPRE el canvi d'Status i l'estat d'alternança al repositori,
-        # també en mode prova, o el pipeline es quedaria bloclat repetint el mateix post.
         commit_repo_files([csv_relpath, state_relpath], f"chore: {post_id} -> Done (mode prova, {post_type})")
         print(f"📝 CSV actualitzat (Mode Prova)! {post_id} -> Done. Proper tipus: {next_type}.")
 
     else:
         # ========================================================
-        # MODE PRODUCCIÓ: PUBLICACIÓ A BUFFER
+        # MODE PRODUCCIÓ: PUBLICACIÓ A ZERNIO + NOTIFICACIÓ DE TEXT
         # ========================================================
-        if not BUFFER_ACCESS_TOKEN:
-            print("⚠️ BUFFER_ACCESS_TOKEN no configurat.")
-            return
-
         public_urls = get_public_image_urls(temp_files)
-        print("📤 Enviant carrousel a Buffer...")
+        print("📤 Publicant carrousel a Zernio...")
 
-        if post_to_buffer(BUFFER_ACCESS_TOKEN, public_urls, caption):
-            telegram_msg = f"🚀 <b>{post_id} publicat amb èxit!</b>\n\n📖 {html.escape(post_data.get('Slide_1_Title', ''))}"
-            send_telegram_media_group(telegram_msg, temp_files)
+        success = post_to_zernio(public_urls, caption)
+
+        title_text = html.escape(post_data.get('Slide_1_Title', ''))
+        if success:
+            telegram_msg = (
+                f"🚀 <b>Nou post publicat a @coupleforms!</b>\n\n"
+                f"📖 <b>Títol:</b> {title_text}\n"
+                f"🆔 <b>Post ID:</b> {post_id} ({post_type})"
+            )
+        else:
+            telegram_msg = (
+                f"⚠️ <b>Error en publicar el post {post_id} a Zernio!</b>\n\n"
+                f"📖 <b>Títol:</b> {title_text}"
+            )
+
+        # En producció NOMÉS s'envia la notificació de text
+        send_telegram_message(telegram_msg)
 
         commit_repo_files([csv_relpath, state_relpath], f"chore: {post_id} -> Done ({post_type})")
         print(f"📝 CSV actualitzat! {post_id} -> Done. Proper tipus: {next_type}.")
