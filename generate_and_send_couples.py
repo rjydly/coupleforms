@@ -16,7 +16,7 @@ from google.genai import types
 # ========================================================
 # CONFIGURACIÓ I RUTES
 # ========================================================
-TEST_MODE = False  # 🧪 Canvia a True per fer proves sense publicar a Zernio
+TEST_MODE = False  # 🧪 Canvia a False per publicar realment a Zernio / Xarxes socials
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -44,6 +44,7 @@ FONT_SANS_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Me
 
 # ENVS
 ZERNIO_API_KEY = os.getenv("ZERNIO_API_KEY")
+ZERNIO_BASE_URL = "https://zernio.com/api/v1"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Clau de Google AI Studio
@@ -132,17 +133,21 @@ def apply_retro_filters_and_frame(bg_img):
     )
     img_warm = img_fade.convert('RGB', warm_matrix)
 
-    # 3. Fosc per garantir la llegibilitat del text blanc
+    # 3. Fosc per garantir la llegibilitat del text blanc (brillantor reduïda per destacar el text)
     brightness_enhancer = ImageEnhance.Brightness(img_warm)
     dark_bg = brightness_enhancer.enhance(0.42)
 
+    # 4. Marc exterior 100% negre amb un blackfade estret a la vora (sense línia de contorn visible).
+    # Tècnica: dibuixem la màscara interior MÉS GRAN que el marc real i després difuminem,
+    # de manera que la transició negre→imatge caigui exactament sobre la vora arrodonida
+    # sense deixar cap anell o línia de tall visible.
     width, height = 1080, 1080
     frame = Image.new('RGBA', (width, height), (0, 0, 0, 255))
 
-    blur_r   = 10   # radi de difuminat
-    margin   = 28   # vora negra visible
+    blur_r   = 10   # radi de difuminat (píxels de transició)
+    margin   = 28   # vora negra visible (reduïda respecte a l'anterior)
     radius   = 60   # arrodoniment de cantonades
-    inner_m  = margin - blur_r
+    inner_m  = margin - blur_r  # interior de la màscara desplaçat cap enfora perquè el blur centri la transició a 'margin'
 
     mask = Image.new('L', (width, height), 0)
     draw_mask = ImageDraw.Draw(mask)
@@ -244,36 +249,14 @@ def draw_footer(draw, font_sans, width):
     tw = bbox[2] - bbox[0]
     draw.text(((width - tw) / 2, 920), text, fill=(255, 255, 255, 220), font=font_sans)
 
-# ========================================================
-# TELEGRAM / ZERNIO / FTP / GIT
-# ========================================================
-
-def send_telegram_message(message):
-    """Envia un missatge de text informatiu a Telegram (per al Mode Producció)"""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("ℹ️ Telegram no configurat.")
-        return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'},
-            timeout=15
-        )
-        print("📲 Notificació enviada a Telegram!")
-    except Exception as e:
-        print(f"⚠️ Error enviant notificació a Telegram: {e}")
-
 def send_telegram_media_group(message, photo_paths):
-    """Envia l'àlbum de fotos complet a Telegram (per al Mode Prova / Revisió)"""
+    """Envia l'àlbum de fotos complet (les 6 diapositives) a Telegram per a la revisió"""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("ℹ️ Telegram no configurat.")
         return
     try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'},
-            timeout=15
-        )
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                      data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'})
 
         media = []
         files = {}
@@ -283,95 +266,10 @@ def send_telegram_media_group(message, photo_paths):
             files[file_key] = open(path, 'rb')
 
         payload = {'chat_id': TELEGRAM_CHAT_ID, 'media': json.dumps(media)}
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMediaGroup",
-            data=payload,
-            files=files,
-            timeout=30
-        )
-        print("📲 Àlbum complet de slides enviat a Telegram per a revisió!")
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMediaGroup", data=payload, files=files)
+        print("📲 Àlbum complet de slides enviat a Telegram!")
     except Exception as e:
         print(f"⚠️ Error enviant àlbum a Telegram: {e}")
-
-def post_to_zernio(image_urls, caption):
-    """Detecta els comptes connectats a Zernio i publica el carrousel adaptant el títol al límit de TikTok."""
-    if not ZERNIO_API_KEY:
-        print("⚠️ ZERNIO_API_KEY no configurada.")
-        return False
-
-    headers = {
-        "Authorization": f"Bearer {ZERNIO_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    # 1. Carregar automàticament tots els comptes socials connectats a Zernio
-    platforms_payload = []
-    try:
-        acc_url = "https://zernio.com/api/v1/accounts"
-        acc_res = requests.get(acc_url, headers=headers, timeout=15)
-        
-        if acc_res.status_code in (200, 201):
-            accounts_list = acc_res.json().get("accounts", [])
-            if not accounts_list:
-                print("⚠️ No s'ha trobat cap compte de xarxa social connectat a Zernio!")
-                return False
-            
-            for acc in accounts_list:
-                acc_id = acc.get("_id") or acc.get("accountId") or acc.get("id")
-                platform_name = acc.get("platform")
-                if acc_id and platform_name:
-                    platforms_payload.append({
-                        "platform": platform_name,
-                        "accountId": str(acc_id)
-                    })
-            print(f"🔗 Comptes detectats a Zernio: {[p['platform'] for p in platforms_payload]}")
-        else:
-            print(f"⚠️ Error carregant comptes de Zernio ({acc_res.status_code}): {acc_res.text}")
-            return False
-
-    except Exception as e:
-        print(f"⚠️ Error de connexió carregant comptes de Zernio: {e}")
-        return False
-
-    # 2. Per als carrousels de fotos, TikTok demana un títol de MÀXIM 90 caràcters
-    tiktok_safe_caption = caption
-    if len(caption) > 90:
-        # Agafem només la primera línia (el títol principal del post)
-        first_line = caption.split('\n')[0].strip()
-        if len(first_line) <= 90 and len(first_line) > 5:
-            tiktok_safe_caption = first_line
-        else:
-            tiktok_safe_caption = caption[:87] + "..."
-        print(f"✂️ Text adaptat per al límit de 90 caràcters de TikTok: '{tiktok_safe_caption}'")
-
-    media_items = [{"url": u, "type": "image"} for u in image_urls]
-
-    post_url = "https://zernio.com/api/v1/posts"
-    payload = {
-        "content": tiktok_safe_caption,
-        "caption": tiktok_safe_caption,
-        "mediaItems": media_items,
-        "mediaUrls": image_urls,
-        "media": image_urls,
-        "platforms": platforms_payload,
-        "publishNow": True
-    }
-
-    try:
-        print("📤 Enviant carrousel a Zernio API per a publicació immediata...")
-        res = requests.post(post_url, headers=headers, json=payload, timeout=30)
-        print(f"ℹ️ Resposta Zernio Status Code: {res.status_code}")
-        print(f"ℹ️ Resposta Zernio Body: {res.text}")
-
-        if res.status_code in (200, 201):
-            print("🚀 Enviat i PUBLICAT amb èxit a través de Zernio!")
-            return True
-        else:
-            print(f"⚠️ Error a Zernio ({res.status_code}): {res.text}")
-            return False
-    except Exception as e:
-        print(f"⚠️ Error de connexió amb Zernio: {e}")
-        return False
 
 def upload_via_ftp(file_path):
     if not (FTP_HOST and FTP_USER and FTP_PASS):
@@ -407,7 +305,12 @@ def get_public_image_urls(temp_files):
     raise Exception("❌ Sense URL pública.")
 
 def commit_repo_files(paths, message):
-    """Fa git add ., commit, pull --rebase i push sense conflictes d'unstaged changes."""
+    """Fa `git add` només dels paths indicats, commit i push.
+    S'utilitza tant per pujar imatges com -crucialment- per persistir els canvis
+    d'Status als CSV i al fitxer d'estat d'alternança; sense això, el workflow
+    reprocessaria sempre la mateixa fila 'Pending' perquè cada run parteix
+    d'un checkout net del repositori.
+    """
     repo = os.getenv("GITHUB_REPOSITORY")
     if not repo:
         print("ℹ️ No s'ha detectat GITHUB_REPOSITORY: s'omet el commit (execució local).")
@@ -415,23 +318,98 @@ def commit_repo_files(paths, message):
     try:
         subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
         subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
-        
-        # Afegeix tots els fitxers modificats en disc abans del pull --rebase
-        subprocess.run(["git", "add", "."], check=True)
-        
+        subprocess.run(["git", "add"] + list(paths), check=True)
         commit_res = subprocess.run(["git", "commit", "-m", message], check=False)
-        subprocess.run(["git", "pull", "--rebase"], check=False)
         subprocess.run(["git", "push"], check=False)
         return commit_res.returncode == 0
     except Exception as e:
         print(f"⚠️ Error fent commit/push: {e}")
         return False
 
+def get_zernio_accounts(api_key):
+    """Llista els comptes de xarxes socials connectats a Zernio (equivalent als 'channels' de Buffer)."""
+    headers = {"Authorization": f"Bearer {api_key}"}
+    res = requests.get(f"{ZERNIO_BASE_URL}/accounts", headers=headers, timeout=30)
+    res.raise_for_status()
+    data = res.json()
+    return data.get("accounts", data if isinstance(data, list) else [])
+
+def post_to_zernio(api_key, image_urls, caption):
+    """Publica el carrousel de 6 imatges a totes les xarxes connectades via Zernio (un únic
+    createPost multi-plataforma, en lloc del bucle per-canal que feia Buffer).
+
+    Per a TikTok, aquest carrousel es publica com a 'Photo Carousel' amb `auto_add_music: True`,
+    que és l'opció que li diu a TikTok que afegeixi automàticament música recomanada al post
+    (l'equivalent programàtic de prémer 'Add music' a l'app en pujar un carrousel de fotos).
+    """
+    if not api_key:
+        print("⚠️ ZERNIO_API_KEY no configurat.")
+        return False
+
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    try:
+        accounts = get_zernio_accounts(api_key)
+    except Exception as e:
+        print(f"⚠️ Error obtenint comptes de Zernio: {e}")
+        return False
+
+    platforms = []
+    has_tiktok = False
+    for acc in accounts:
+        service = str(acc.get("platform", "")).lower()
+        acc_id = acc.get("_id") or acc.get("id") or acc.get("accountId")
+        if not acc_id or "youtube" in service:
+            continue
+        platforms.append({"platform": service, "accountId": acc_id})
+        if service == "tiktok":
+            has_tiktok = True
+
+    if not platforms:
+        print("⚠️ Cap compte vàlid trobat a Zernio.")
+        return False
+
+    payload = {
+        "content": caption,
+        "mediaItems": [{"type": "image", "url": url} for url in image_urls],
+        "platforms": platforms,
+        "publishNow": True
+    }
+
+    if has_tiktok:
+        # Camp especial de TikTok: va al nivell arrel del payload, no dins de platformSpecificData.
+        payload["tiktokSettings"] = {
+            "privacy_level": "PUBLIC_TO_EVERYONE",
+            "allow_comment": True,
+            "media_type": "photo",              # Carrousel de fotos (no vídeo)
+            "photo_cover_index": 0,
+            "description": caption[:4000],
+            "auto_add_music": True,             # 🎵 Àudio automàtic de TikTok al carrousel
+            "content_preview_confirmed": True,  # Requerit legalment per TikTok
+            "express_consent_given": True       # Requerit legalment per TikTok
+        }
+
+    try:
+        res = requests.post(f"{ZERNIO_BASE_URL}/posts", headers=headers, json=payload, timeout=60)
+        data = res.json()
+    except Exception as e:
+        print(f"⚠️ Error de xarxa publicant a Zernio: {e}")
+        return False
+
+    if res.status_code >= 400 or data.get("error"):
+        print(f"⚠️ Error publicant a Zernio: {data.get('error', res.text)}")
+        return False
+
+    print(f"✅ Post publicat via Zernio (id: {data.get('post', {}).get('_id', 'n/a')}).")
+    return True
+
 # ========================================================
 # LECTURA DE CSV I ALTERNANÇA DE TIPUS DE POST
 # ========================================================
 
 def read_csv_safe(csv_path):
+    """Lectura defensiva d'un CSV: retorna (headers, rows) amb totes les files
+    completades a la mida de headers per evitar IndexError."""
     if not os.path.exists(csv_path):
         print(f"❌ Error: Fitxer CSV no trobat a {csv_path}")
         return None, None
@@ -453,6 +431,7 @@ def read_csv_safe(csv_path):
         print(f"❌ Error: No s'ha trobat la columna 'Status' a {csv_path}.")
         return None, None
 
+    status_idx = headers.index('Status')
     for r in rows:
         while len(r) < len(headers):
             r.append('')
@@ -473,6 +452,8 @@ def write_csv_safe(csv_path, headers, rows):
         writer.writerows(rows)
 
 def load_next_post_type():
+    """Llegeix quin tipus de post toca aquesta execució ('question' o 'test').
+    Si no existeix el fitxer d'estat (primera execució), es comença per 'question'."""
     if os.path.exists(STATE_PATH):
         with open(STATE_PATH, 'r', encoding='utf-8') as f:
             value = f.read().strip().lower()
@@ -485,6 +466,9 @@ def save_next_post_type(post_type):
         f.write(post_type)
 
 def pick_post_to_process():
+    """Determina quin CSV/tipus de post cal processar aquesta execució, alternant
+    entre 'question' i 'test'. Si el tipus que tocava no té cap fila 'Pending',
+    es prova amb l'altre tipus per no bloquejar el pipeline."""
     preferred_type = load_next_post_type()
     other_type = 'test' if preferred_type == 'question' else 'question'
 
@@ -536,11 +520,11 @@ def main():
         d = ImageDraw.Draw(s)
 
         if i == 0:
-            # --- SLIDE 1: PORTADA ---
+            # --- SLIDE 1: PORTADA (comuna a tots dos esquemes) ---
             draw_title_with_underline(d, post_data.get('Slide_1_Title', ''), post_data.get('Highlight_Word', ''), font_serif_large, 1080, None)
 
         elif post_type == 'test':
-            # --- SLIDES 2-6: TEST (pregunta + opcions A-D) ---
+            # --- SLIDES 2-6: TEST, cadascuna amb la seva pròpia pregunta + opcions A-D ---
             q_text = post_data.get(f'Slide_{i+1}_Question', '')
             options = [
                 ('A) ', post_data.get(f'Slide_{i+1}_OptA', '')),
@@ -551,7 +535,7 @@ def main():
             draw_test_slide(d, q_text, options, font_serif_med, font_serif_italic, font_serif_med, 1080)
 
         else:
-            # --- SLIDES 2-6: QUESTION (preguntes normals) ---
+            # --- SLIDES 2-6: QUESTION, preguntes normals sense opcions ---
             key = 'Slide_2_Question_or_Title' if i == 1 else f'Slide_{i+1}_Question'
             q_text = post_data.get(key, '')
             draw_question_slide(d, q_text, font_serif_med, 1080)
@@ -565,9 +549,12 @@ def main():
     tags = "#couples #relationshipgoals #deepquestions #couplesgame #formfriends"
     caption = f"{post_data.get('Slide_1_Title', '')}\n\nTag your person and answer in the comments. ✨\n\nLink in bio to play formfriends.com\n\n—\n{tags}"
 
+    # Marquem la fila com a 'Done' i l'escrivim sempre, independentment del mode,
+    # perquè el següent run (test o producció) no la torni a agafar.
     rows[current_idx][status_idx] = 'Done'
     write_csv_safe(csv_path, headers, rows)
 
+    # Alternem el tipus per a la propera execució.
     next_type = 'test' if post_type == 'question' else 'question'
     save_next_post_type(next_type)
 
@@ -576,7 +563,7 @@ def main():
 
     if TEST_MODE:
         # ========================================================
-        # MODE PROVA: NOMÉS ENVIAMENT DE LES 6 IMATGES A TELEGRAM
+        # MODE PROVA: NOMÉS ENVIAMENT A TELEGRAM
         # ========================================================
         print("🧪 MODE PROVA ACTIVAT: S'omet Zernio. Enviant les 6 imatges a Telegram...")
         title_text = html.escape(post_data.get('Slide_1_Title', ''))
@@ -584,37 +571,29 @@ def main():
             f"🧪 <b>[MODE PROVA] {post_id} generat ({post_type})</b>\n\n"
             f"📖 <b>Títol:</b> {title_text}\n"
             f"🏷️ <b>Hashtags:</b> {tags}\n\n"
-            f"<i>No s'ha enviat a Zernio. Comprova les 6 diapositives a l'àlbum adjunt!</i>"
+            f"<i>No s'ha enviat a Buffer. Comprova les 6 diapositives a l'àlbum adjunt!</i>"
         )
         send_telegram_media_group(telegram_msg, temp_files)
 
+        # Persistim SEMPRE el canvi d'Status i l'estat d'alternança al repositori,
+        # també en mode prova, o el pipeline es quedaria bloclat repetint el mateix post.
         commit_repo_files([csv_relpath, state_relpath], f"chore: {post_id} -> Done (mode prova, {post_type})")
         print(f"📝 CSV actualitzat (Mode Prova)! {post_id} -> Done. Proper tipus: {next_type}.")
 
     else:
         # ========================================================
-        # MODE PRODUCCIÓ: PUBLICACIÓ A ZERNIO + NOTIFICACIÓ DE TEXT
+        # MODE PRODUCCIÓ: PUBLICACIÓ A ZERNIO
         # ========================================================
+        if not ZERNIO_API_KEY:
+            print("⚠️ ZERNIO_API_KEY no configurat.")
+            return
+
         public_urls = get_public_image_urls(temp_files)
-        print("📤 Publicant carrousel a Zernio...")
+        print("📤 Enviant carrousel a Zernio (amb àudio automàtic per a TikTok)...")
 
-        success = post_to_zernio(public_urls, caption)
-
-        title_text = html.escape(post_data.get('Slide_1_Title', ''))
-        if success:
-            telegram_msg = (
-                f"🚀 <b>Nou post publicat a @coupleforms!</b>\n\n"
-                f"📖 <b>Títol:</b> {title_text}\n"
-                f"🆔 <b>Post ID:</b> {post_id} ({post_type})"
-            )
-        else:
-            telegram_msg = (
-                f"⚠️ <b>Error en publicar el post {post_id} a Zernio!</b>\n\n"
-                f"📖 <b>Títol:</b> {title_text}"
-            )
-
-        # En producció NOMÉS s'envia la notificació de text
-        send_telegram_message(telegram_msg)
+        if post_to_zernio(ZERNIO_API_KEY, public_urls, caption):
+            telegram_msg = f"🚀 <b>{post_id} publicat amb èxit!</b>\n\n📖 {html.escape(post_data.get('Slide_1_Title', ''))}"
+            send_telegram_media_group(telegram_msg, temp_files)
 
         commit_repo_files([csv_relpath, state_relpath], f"chore: {post_id} -> Done ({post_type})")
         print(f"📝 CSV actualitzat! {post_id} -> Done. Proper tipus: {next_type}.")
