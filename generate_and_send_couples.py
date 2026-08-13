@@ -293,8 +293,8 @@ def send_telegram_media_group(message, photo_paths):
     except Exception as e:
         print(f"⚠️ Error enviant àlbum a Telegram: {e}")
 
-def post_to_zernio(image_urls, caption):
-    """Envia el carrousel d'imatges a Zernio API i EL PUBLICA IMMEDIATAMENT."""
+def post_to_zernio(media_urls, caption):
+    """Envia el contingut a Zernio API i el publica immediatament a Instagram i TikTok."""
     if not ZERNIO_API_KEY:
         print("⚠️ ZERNIO_API_KEY no configurada.")
         return False
@@ -305,23 +305,26 @@ def post_to_zernio(image_urls, caption):
         "Content-Type": "application/json"
     }
 
-    # "publishNow": True evita que es quedi com a borrador i ho publica directament
     payload = {
         "content": caption,
         "caption": caption,
-        "mediaUrls": image_urls,
-        "media": image_urls,
+        "mediaUrls": media_urls,
+        "media": media_urls,
+        "platforms": [
+            {"platform": "instagram"},
+            {"platform": "tiktok"}
+        ],
         "publishNow": True
     }
 
     try:
-        print("📤 Enviant carrousel a Zernio API per a publicació immediata...")
+        print("📤 Enviant a Zernio API per a publicació immediata...")
         res = requests.post(url, headers=headers, json=payload, timeout=30)
         print(f"ℹ️ Resposta Zernio Status Code: {res.status_code}")
         print(f"ℹ️ Resposta Zernio Body: {res.text}")
 
         if res.status_code in (200, 201):
-            print("🚀 Carrousel publicat amb èxit a través de Zernio!")
+            print("🚀 Enviat i PUBLICAT amb èxit a través de Zernio!")
             return True
         else:
             print(f"⚠️ Error a Zernio ({res.status_code}): {res.text}")
@@ -329,6 +332,7 @@ def post_to_zernio(image_urls, caption):
     except Exception as e:
         print(f"⚠️ Error de connexió amb Zernio: {e}")
         return False
+
 
 def upload_via_ftp(file_path):
     if not (FTP_HOST and FTP_USER and FTP_PASS):
