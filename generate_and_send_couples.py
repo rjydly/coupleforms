@@ -321,7 +321,7 @@ def commit_repo_files(paths, message):
         return False
 
 def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls, title, caption):
-    """Publica un carrousel d'imatges a TikTok i Instagram via Zernio API"""
+    """Publica un carrousel d'imatges immediatament a TikTok i Instagram via Zernio API"""
     zernio_url = "https://zernio.com/api/v1/posts"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -333,7 +333,6 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
     if len(clean_title) > 90:
         clean_title = clean_title[:87] + "..."
 
-    # Combinem el títol i la descripció per al text global de la publicació
     full_content = f"{clean_title}\n\n{caption}"
 
     payload = {
@@ -348,10 +347,11 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
             }
         ],
         "type": "carousel",
-        "content": full_content,    # 👈 AQUEST ÉS EL CAMP QUE DEMANA ZERNIO!
+        "content": full_content,
         "media_urls": image_urls,
         "title": clean_title,
         "caption": caption,
+        "publishNow": True,  # 👈 Aquest camp obliga a Zernio a publicar-ho ara mateix
         "tiktok_options": {
             "auto_add_music": True
         }
@@ -360,7 +360,7 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
     try:
         response = requests.post(zernio_url, headers=headers, json=payload, timeout=30)
         if response.status_code in (200, 201):
-            print("✅ Carrousel enviat amb èxit a Zernio (TikTok + Instagram)!")
+            print("✅ Carrousel enviat i publicat amb èxit a Zernio (TikTok + Instagram)!")
             return True
         else:
             print(f"❌ Error en publicar a Zernio ({response.status_code}): {response.text}")
@@ -368,6 +368,7 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
     except Exception as e:
         print(f"⚠️ Excepció en comunicar amb Zernio: {e}")
         return False
+    
 # ========================================================
 # LECTURA DE CSV I ALTERNANÇA DE TIPUS DE POST
 # ========================================================
