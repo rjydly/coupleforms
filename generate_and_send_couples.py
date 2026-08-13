@@ -344,15 +344,22 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
     instagram_content = f"{clean_title}\n\n{caption}"
     media_items = [{"type": "image", "url": url} for url in image_urls]
 
+    # Configuració específica per a TikTok
+    tiktok_settings = {
+        "autoAddMusic": True,
+        "privacyLevel": "PUBLIC_TO_EVERYONE", # Necessari en moltes versions de l'API de TikTok
+        "disableComment": False,
+        "disableStitch": False,
+        "disableDuet": False
+    }
+
     payload = {
         "platforms": [
             {
                 "platform": "tiktok",
                 "accountId": tiktok_account_id,
                 "content": tiktok_content,
-                "tiktokOptions": {         # 👈 Clau en camelCase
-                    "autoAddMusic": True   # 👈 Activa la música automàtica a TikTok
-                }
+                "tiktokOptions": tiktok_settings  # 👈 Opcions específiques de TikTok
             },
             {
                 "platform": "instagram",
@@ -363,13 +370,10 @@ def post_to_zernio(api_key, tiktok_account_id, instagram_account_id, image_urls,
         "content": tiktok_content,
         "mediaItems": media_items,
         "publishNow": True,
-        "tiktokOptions": {                  # 👈 Fallback global en camelCase
-            "autoAddMusic": True
-        }
+        "tiktokOptions": tiktok_settings  # 👈 Fallback global
     }
 
     try:
-        # Augmentem el timeout a 120 segons per donar temps a publicar a ambdues xarxes
         response = requests.post(zernio_url, headers=headers, json=payload, timeout=120)
         if response.status_code in (200, 201):
             print("✅ Carrousel enviat i publicat amb èxit a Zernio (TikTok + Instagram)!")
