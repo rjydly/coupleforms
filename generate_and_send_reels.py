@@ -4,6 +4,7 @@ import random
 import requests
 import html
 import subprocess
+import ftplib
 
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
 
@@ -20,8 +21,7 @@ except ImportError:
 # ========================================================
 # CONFIGURACIÓ I PARÀMETRES DE PROVA
 # ========================================================
-# Es pot configurar per entorn (TEST_MODE="true") o canviar directament a False per a producció
-TEST_MODE = False
+TEST_MODE = False  # 🧪 Canvia a True per fer proves sense publicar a Zernio
 
 # Permet forçar un tipus de vídeo específic ('type1', 'type2', 'type3', 'type4', 'type5' o None)
 FORCE_TYPE = os.getenv("FORCE_TYPE", None)  
@@ -52,7 +52,11 @@ PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 FREESOUND_API_KEY = os.getenv("FREESOUND_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
+ZERNIO_API_KEY = os.getenv("ZERNIO_API_KEY")
+
+FTP_HOST = os.getenv("FTP_HOST")
+FTP_USER = os.getenv("FTP_USER")
+FTP_PASS = os.getenv("FTP_PASS")
 
 CANVAS_W, CANVAS_H = 1080, 1920
 SQUARE_SIZE = 1080
@@ -219,9 +223,6 @@ def commit_repo_files(paths, message):
 # ==========================================================
 
 def create_base_square_overlay():
-    """Crea la capa RGBA 1080x1920 que és 100% NEGRA OPACA a les barres superiors/inferiors
-    i dibuixa el marc arrodonit sobre el quadrat centrat (Y=420)."""
-    
     frame = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 255))
     
     blur_r = 10
@@ -250,7 +251,6 @@ def create_base_square_overlay():
     return frame
 
 def add_footer_to_overlay(draw_obj, font_sans):
-    """Afegeix la marca d'aigua inferior 'coupleforms' amb ombra"""
     text = "coupleforms"
     draw_text_centered_with_shadow(draw_obj, text, font_sans, SQUARE_TOP_Y + 920, fill_color=(255, 255, 255, 230))
 
@@ -398,12 +398,10 @@ def generate_overlays_type5(data, font_title, font_item, font_sans):
     return frames
 
 # =========================================================================
-# ENSAMBLATGE DE VÍDEO AMB MOVIEPY (VÍDEO + ÀUDIO DE FREESOUND)
+# ENSAMBLATGE DE VÍDEO AMB MOVIEPY
 # =========================================================================
 
 def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, output_path, bg_audio_path=None):
-    """Encaixa el vídeo de fons exactament a un quadrat de 1080x1080 a Y=420,
-    aplica transició de fosa a negre, afegeix la capa de text i l'àudio de Freesound."""
     print(f"⚙️ Ensamblant vídeo final ({output_path}) amb MoviePy...")
     
     total_duration = sum(duration_per_frame)
@@ -480,7 +478,6 @@ def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, outpu
                 print("🎵 Processant i integrant l'àudio de fons des de Freesound...")
                 audio_clip = AudioFileClip(bg_audio_path)
 
-                # Si l'àudio és més curt que la durada del vídeo, el fem en bucle
                 if audio_clip.duration < total_duration:
                     try:
                         from moviepy.audio.fx.audio_loop import audio_loop
@@ -493,11 +490,9 @@ def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, outpu
                     else:
                         audio_clip = audio_clip.subclip(0, total_duration)
 
-                # Reduïm el volum al 25% per ser música suau de fons
                 if hasattr(audio_clip, 'volumex'):
                     audio_clip = audio_clip.volumex(0.25)
 
-                # Fadeout d'àudio al final de 0.8 segons
                 try:
                     if hasattr(audio_clip, 'audio_fadeout'):
                         audio_clip = audio_clip.audio_fadeout(0.8)
@@ -506,7 +501,6 @@ def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, outpu
                 except Exception:
                     pass
 
-                # Afegim l'àudio al clip final
                 if hasattr(final_clip, 'set_audio'):
                     final_clip = final_clip.set_audio(audio_clip)
                 elif hasattr(final_clip, 'with_audio'):
@@ -527,7 +521,6 @@ def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, outpu
         print("✅ Reel generat amb èxit!")
 
     finally:
-        # 🧹 Tancament explícit per alliberar memòria RAM en CI/CD (GitHub Actions)
         if audio_clip:
             try: audio_clip.close()
             except: pass
@@ -541,10 +534,26 @@ def render_moviepy_reel(bg_video_paths, overlay_paths, duration_per_frame, outpu
         except: pass
 
 # ========================================================
-# TELEGRAM / CSV / ROTACIÓ DE TIPUS
+# TELEGRAM / ZERNIO / FTP / CSV
 # ========================================================
 
+def send_telegram_message(message):
+    """Envia un missatge de text informatiu a Telegram (per al Mode Producció)"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("ℹ️ Telegram no configurat.")
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'},
+            timeout=15
+        )
+        print("📲 Notificació enviada a Telegram!")
+    except Exception as e:
+        print(f"⚠️ Error enviant notificació a Telegram: {e}")
+
 def send_telegram_video(video_path, caption):
+    """Envia el fitxer MP4 complet a Telegram (per al Mode Prova / Revisió)"""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("ℹ️ Telegram no configurat.")
         return
@@ -554,10 +563,73 @@ def send_telegram_video(video_path, caption):
         with open(video_path, 'rb') as f:
             files = {'video': f}
             data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': caption, 'parse_mode': 'HTML'}
-            requests.post(url, data=data, files=files)
+            requests.post(url, data=data, files=files, timeout=60)
         print("✅ Vídeo enviat a Telegram!")
     except Exception as e:
         print(f"⚠️ Error enviant vídeo a Telegram: {e}")
+
+def post_to_zernio(media_urls, caption):
+    """Envia el vídeo a Zernio API per a la seva publicació a xarxes"""
+    if not ZERNIO_API_KEY:
+        print("⚠️ ZERNIO_API_KEY no configurada.")
+        return False
+
+    url = "https://api.zernio.com/v1/posts"
+    headers = {
+        "Authorization": f"Bearer {ZERNIO_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "caption": caption,
+        "media": media_urls
+    }
+
+    try:
+        print("📤 Enviant vídeo a Zernio API...")
+        res = requests.post(url, headers=headers, json=payload, timeout=30)
+        if res.status_code in (200, 201):
+            print("✅ Reel publicat amb èxit a través de Zernio!")
+            return True
+        else:
+            print(f"⚠️ Error a Zernio ({res.status_code}): {res.text}")
+            return False
+    except Exception as e:
+        print(f"⚠️ Error de connexió amb Zernio: {e}")
+        return False
+
+def upload_video_via_ftp(file_path):
+    if not (FTP_HOST and FTP_USER and FTP_PASS):
+        return None
+    filename = os.path.basename(file_path)
+    try:
+        ftp = ftplib.FTP(FTP_HOST, FTP_USER, FTP_PASS, timeout=30)
+        try: ftp.cwd("public_html")
+        except: pass
+        try: ftp.cwd("public_videos")
+        except:
+            ftp.mkd("public_videos")
+            ftp.cwd("public_videos")
+        with open(file_path, 'rb') as f:
+            ftp.storbinary(f'STOR {filename}', f)
+        ftp.quit()
+        return f"https://formfriends.com/public_videos/{filename}"
+    except Exception as e:
+        print(f"⚠️ Error FTP: {e}")
+        return None
+
+def get_public_video_urls(video_paths):
+    urls = [upload_video_via_ftp(v) for v in video_paths]
+    if all(urls):
+        return urls
+
+    repo = os.getenv("GITHUB_REPOSITORY")
+    branch = os.getenv("GITHUB_REF_NAME", "main")
+    if repo:
+        commit_repo_files(["public_videos/"], "upload: video")
+        return [f"https://raw.githubusercontent.com/{repo}/{branch}/public_videos/{os.path.basename(v)}" for v in video_paths]
+
+    raise Exception("❌ Sense URL pública per al vídeo.")
 
 def read_csv_safe(csv_path):
     if not os.path.exists(csv_path):
@@ -616,7 +688,6 @@ def pick_reel_type_to_process():
     return None, None, None, None, None, None
 
 def cleanup_temp_files(paths):
-    """Elimina fitxers temporals de vídeo, àudio i imatges generats durant l'execució"""
     for p in paths:
         if p and os.path.exists(p):
             try:
@@ -642,7 +713,7 @@ def main():
         return
 
     video_id = data.get('Video_ID', 'Reel_1')
-    print(f"🚀 Generant Reel ({post_type}) per a {video_id} des de {os.path.basename(csv_path)}...")
+    print(f"🚀 Generant Reel ({post_type}) per a {video_id} des de {os.path.basename(csv_path)} (MODE PROVA = {TEST_MODE})...")
 
     font_serif = ImageFont.truetype(FONT_SERIF_REG_PATH, 52)
     font_serif_large = ImageFont.truetype(FONT_SERIF_REG_PATH, 58)
@@ -695,7 +766,7 @@ def main():
         render_moviepy_reel(bg_video_paths, overlay_paths, durations, output_video_path, bg_audio_path=bg_audio_path)
 
         tags = "#couples #relationshipgoals #couplesreels #formfriends"
-        caption = f"✨ <b>{html.escape(caption_title)}</b>\n\nTag your person in the comments ❤️\n\nPlay at formfriends.com\n\n{tags}"
+        caption = f"✨ {caption_title}\n\nTag your person in the comments ❤️\n\nPlay at formfriends.com\n\n{tags}"
 
         status_idx = headers.index('Status')
         rows[current_idx][status_idx] = 'Done'
@@ -707,7 +778,10 @@ def main():
         state_relpath = os.path.relpath(STATE_PATH, BASE_DIR)
 
         if TEST_MODE:
-            print("🧪 MODE PROVA ACTIVAT: S'omet Buffer. Enviant el vídeo a Telegram...")
+            # ========================================================
+            # MODE PROVA: ENVIAMENT DEL FITXER DE VÍDEO A TELEGRAM
+            # ========================================================
+            print("🧪 MODE PROVA ACTIVAT: S'omet Zernio. Enviant el vídeo a Telegram...")
             telegram_caption = f"🧪 <b>[MODE PROVA - REEL] {video_id} ({post_type})</b>\n\n{caption}"
             send_telegram_video(output_video_path, telegram_caption)
             
@@ -715,9 +789,31 @@ def main():
             print(f"📝 CSV actualitzat a Git! {video_id} -> Done. Proper tipus: {next_type}.")
 
         else:
-            print("📤 MODE PRODUCCIÓ: Publicació a Buffer...")
-            send_telegram_video(output_video_path, f"🚀 <b>[PUBLICAT] {video_id}</b>\n\n{caption}")
+            # ========================================================
+            # MODE PRODUCCIÓ: PUBLICACIÓ A ZERNIO + NOTIFICACIÓ DE TEXT
+            # ========================================================
+            print("📤 MODE PRODUCCIÓ: Publicant a Zernio...")
+            public_video_urls = get_public_video_urls([output_video_path])
+            success = post_to_zernio(public_video_urls, caption)
+
+            title_text = html.escape(caption_title)
+            if success:
+                telegram_msg = (
+                    f"🚀 <b>Nou reel publicat a @coupleforms!</b>\n\n"
+                    f"✨ <b>Títol:</b> {title_text}\n"
+                    f"🆔 <b>Video ID:</b> {video_id} ({post_type})"
+                )
+            else:
+                telegram_msg = (
+                    f"⚠️ <b>Error en publicar el reel {video_id} a Zernio!</b>\n\n"
+                    f"✨ <b>Títol:</b> {title_text}"
+                )
+
+            # En producció NOMÉS s'envia la notificació de text a Telegram
+            send_telegram_message(telegram_msg)
+
             commit_repo_files([csv_relpath, state_relpath], f"chore: {video_id} -> Done ({post_type})")
+            print(f"📝 CSV actualitzat a Git! {video_id} -> Done. Proper tipus: {next_type}.")
 
     finally:
         # 🧹 Netegem els fitxers temporals de vídeo, imatge i àudio
