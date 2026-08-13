@@ -3,10 +3,9 @@ name: Generate and Post Couples Carousels
 on:
   workflow_dispatch: # Permet executar-lo manualment des del botó "Run workflow" de GitHub
   schedule:
-    - cron: '0 7 * * *'   # S'executa a les 07:00 UTC (09:00h hora catalana)
-    - cron: '0 11 * * *'  # S'executa a les 11:00 UTC (13:00h hora catalana)
-    - cron: '0 15 * * *'  # S'executa a les 15:00 UTC (17:00h hora catalana)
-    - cron: '0 19 * * *'  # S'executa a les 19:00 UTC (21:00h hora catalana)
+    - cron: '0 8 * * *'   # S'executa automàticament a les 08:00 UTC
+    - cron: '0 14 * * *'  # S'executa automàticament a les 14:00 UTC
+    - cron: '0 20 * * *'  # S'executa automàticament a les 20:00 UTC
 
 permissions:
   contents: write # Permís imprescindible per poder fer commit i guardar el posts.csv i les imatges
@@ -18,8 +17,6 @@ jobs:
     steps:
       - name: 📦 Checkout Repositori
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # Necessari per fer git commit/push sense errors de repositori superficial
 
       - name: 🐍 Configurar Python 3.10
         uses: actions/setup-python@v5
@@ -41,6 +38,5 @@ jobs:
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASS: ${{ secrets.FTP_PASS }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python generate_and_send_couples.py
