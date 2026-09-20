@@ -1,6 +1,7 @@
 import os
 import csv
 import time
+import json
 import random
 import requests
 import html
@@ -12,9 +13,9 @@ if not hasattr(Image, 'ANTIALIAS'):
     Image.ANTIALIAS = Image.Resampling.LANCZOS
 
 try:
-    from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, ColorClip
+    from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, ColorClip, AudioFileClip
 except ImportError:
-    from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, ColorClip
+    from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, ColorClip, AudioFileClip
 
 # ========================================================
 # CONFIGURACIÓ I PARÀMETRES
@@ -27,6 +28,7 @@ VIDEOS_DIR = os.path.join(BASE_DIR, 'public_videos')
 VIDEOS_CSV_DIR = os.path.join(BASE_DIR, 'videos')
 
 STATE_PATH = os.path.join(BASE_DIR, 'next_video_type.txt')
+USED_AUDIO_PATH = os.path.join(BASE_DIR, 'used_ig_audio.txt')
 
 CSV_PATHS = {
     'type1': os.path.join(VIDEOS_CSV_DIR, 'video_phrases.csv'),
@@ -45,6 +47,7 @@ FONT_SERIF_ITALIC_URL = "https://github.com/google/fonts/raw/main/ofl/playfairdi
 FONT_SANS_URL = "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Medium.ttf"
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
+FREESOUND_API_KEY = os.getenv("FREESOUND_API_KEY")
 ZERNIO_API_KEY = os.getenv("ZERNIO_API_KEY")
 ZERNIO_TIKTOK_ACCOUNT_ID = os.getenv("ZERNIO_TIKTOK_ACCOUNT_ID")
 ZERNIO_INSTAGRAM_ACCOUNT_ID = os.getenv("ZERNIO_INSTAGRAM_ACCOUNT_ID")
@@ -61,7 +64,6 @@ SQUARE_TOP_Y = (CANVAS_H - SQUARE_SIZE) // 2
 # ========================================================
 
 def clean_directory(dir_path):
-    """Buda completament els vídeos anteriors per mantenir lleuger el repo."""
     if os.path.exists(dir_path):
         for f in os.listdir(dir_path):
             p = os.path.join(dir_path, f)
@@ -111,6 +113,103 @@ def send_telegram_text(message):
         print("📲 Notificació de text enviada a Telegram!")
     except Exception as e:
         print(f"⚠️ Error enviant text a Telegram: {e}")
+
+# ========================================================
+# DESCÀRREGA DE MÚSICA FREESOUND (PER A TIKTOK)
+# ========================================================
+
+def download_freesound_romantic_music():
+    """Cerca i descarrega una pista suau de piano/romàntica de Freesound per integrar-la al vídeo."""
+    if not FREESOUND_API_KEY:
+        print("ℹ️ FREESOUND_API_KEY no configurada. El vídeo es generarà sense àudio base.")
+        return None
+
+    queries = [
+        "romantic piano soft", "soft acoustic guitar romantic", 
+        "romantic ambient background", "peaceful piano romance",
+        "soft cinematic romantic piano", "peaceful chill lofi", "warm ambient piano"
+    ]
+    query = random.choice(queries)
+    print(f"🎵 Cercant música romàntica a Freesound ('{query}')...")
+
+    url = "https://freesound.org/apiv2/search/text/"
+    params = {
+        "query": query,
+        "filter": "duration:[12 TO 120]",
+        "fields": "id,name,previews,duration",
+        "page_size": 15,
+        "token": FREESOUND_API_KEY
+    }
+
+    try:
+        res = requests.get(url, params=params, timeout=15)
+        if res.status_code == 200:
+            results = res.json().get("results", [])
+            if results:
+                selected = random.choice(results)
+                previews = selected.get("previews", {})
+                mp3_url = previews.get("preview-hq-mp3") or previews.get("preview-lq-mp3")
+                if mp3_url:
+                    audio_res = requests.get(mp3_url, timeout=20)
+                    audio_path = os.path.join(BASE_DIR, "temp_freesound_bg.mp3")
+                    with open(audio_path, "wb") as f:
+                        f.write(audio_res.content)
+                    print(f"✅ Música Freesound descarregada: '{selected.get('name')}'")
+                    return audio_path
+    except Exception as e:
+        print(f"⚠️ Error Freesound: {e}")
+    return None
+
+# ========================================================
+# GESTIÓ D'ÀUDIO EN TENDÈNCIA D'INSTAGRAM (SENSE REPETIR)
+# ========================================================
+
+def load_used_audio_ids():
+    if os.path.exists(USED_AUDIO_PATH):
+        with open(USED_AUDIO_PATH, "r", encoding="utf-8") as f:
+            return [line.strip() for line in f.readlines() if line.strip()]
+    return []
+
+def save_used_audio_id(audio_id):
+    used = load_used_audio_ids()
+    used.append(audio_id)
+    # Guardem només els últims 25 IDs per no allargar el fitxer infinitament
+    used = used[-25:]
+    with open(USED_AUDIO_PATH, "w", encoding="utf-8") as f:
+        f.write("\n".join(used))
+
+def get_instagram_trending_audio_id(account_id):
+    """Cerca música d'Instagram garantint que NO es repeteixi la mateixa cançó recentment."""
+    used_ids = load_used_audio_ids()
+    headers = {"Authorization": f"Bearer {ZERNIO_API_KEY}"}
+
+    # Provem primer sense 'q' (tendències pures) i com a fallback amb paraules clau romàntiques
+    queries = ["", "love", "romantic", "piano", "acoustic", "sunset"]
+    random.shuffle(queries)
+
+    for q in queries:
+        try:
+            url = f"https://zernio.com/api/v1/accounts/{account_id}/instagram/audio"
+            params = {"audioType": "music"}
+            if q: params["q"] = q
+
+            res = requests.get(url, headers=headers, params=params, timeout=15)
+            if res.status_code == 200:
+                tracks = res.json().get("audio", [])
+                # Filtrem aquelles cançons que no hàgim utilitzat recentment
+                fresh_tracks = [t for t in tracks if t.get("audioId") and t.get("audioId") not in used_ids]
+
+                candidate_tracks = fresh_tracks if fresh_tracks else tracks
+                if candidate_tracks:
+                    chosen = random.choice(candidate_tracks[:10])
+                    audio_id = chosen.get("audioId")
+                    save_used_audio_id(audio_id)
+                    print(f"🎵 Àudio Instagram NOU: '{chosen.get('title')}' de {chosen.get('displayArtist')} (ID: {audio_id})")
+                    return audio_id
+        except Exception as e:
+            print(f"⚠️ Error cercant música a Instagram: {e}")
+
+    return None
 
 # ========================================================
 # PEXELS & OVERLAYS
@@ -257,14 +356,21 @@ def generate_overlays_type5(data, font_title, font_item, font_sans):
         frames.append(p)
     return frames
 
-def render_moviepy_reel_silent(bg_video_paths, overlay_paths, duration_per_frame, output_path):
-    print("⚙️ Ensamblant vídeo mut amb MoviePy...")
+# ========================================================
+# RENDERITZACIÓ DE VÍDEO (AMB ÀUDIO DE FREESOUND)
+# ========================================================
+
+def render_moviepy_reel_with_audio(bg_video_paths, overlay_paths, duration_per_frame, output_path, bg_audio_path=None):
+    """Genera el vídeo amb la música de Freesound integrada a l'arxiu."""
+    print("⚙️ Ensamblant vídeo amb MoviePy i pista d'àudio...")
     total_duration = sum(duration_per_frame)
     num_videos = len(bg_video_paths)
     segment_duration = total_duration / num_videos
 
     bg_black = ColorClip(size=(CANVAS_W, CANVAS_H), color=(0, 0, 0), duration=total_duration)
     raw_bg_clips, subclips, overlay_clips = [], [], []
+    audio_clip = None
+    final_clip = None
 
     try:
         start_t = 0
@@ -297,9 +403,53 @@ def render_moviepy_reel_silent(bg_video_paths, overlay_paths, duration_per_frame
             start_time += dur
 
         final_clip = CompositeVideoClip([bg_black] + subclips + overlay_clips)
-        final_clip.write_videofile(output_path, fps=24, codec="libx264", audio=False, preset="fast", threads=2)
-        print("✅ Reel mut renderitzat correctament!")
+
+        # 🎵 Integració de la música de Freesound al vídeo
+        if bg_audio_path and os.path.exists(bg_audio_path):
+            try:
+                audio_clip = AudioFileClip(bg_audio_path)
+                if audio_clip.duration < total_duration:
+                    try:
+                        from moviepy.audio.fx.audio_loop import audio_loop
+                        audio_clip = audio_loop(audio_clip, duration=total_duration)
+                    except Exception: pass
+                else:
+                    audio_clip = audio_clip.subclipped(0, total_duration) if hasattr(audio_clip, 'subclipped') else audio_clip.subclip(0, total_duration)
+
+                # Volum suau al 30% per no tapar
+                if hasattr(audio_clip, 'volumex'):
+                    audio_clip = audio_clip.volumex(0.30)
+
+                try:
+                    if hasattr(audio_clip, 'audio_fadeout'):
+                        audio_clip = audio_clip.audio_fadeout(0.8)
+                except Exception: pass
+
+                if hasattr(final_clip, 'set_audio'):
+                    final_clip = final_clip.set_audio(audio_clip)
+                elif hasattr(final_clip, 'with_audio'):
+                    final_clip = final_clip.with_audio(audio_clip)
+            except Exception as e_aud:
+                print(f"⚠️ Error processant l'àudio de Freesound: {e_aud}")
+
+        has_audio = audio_clip is not None
+        final_clip.write_videofile(
+            output_path, 
+            fps=24, 
+            codec="libx264", 
+            audio=has_audio,
+            audio_codec="aac" if has_audio else None,
+            preset="fast", 
+            threads=2
+        )
+        print("✅ Reel renderitzat amb èxit!")
     finally:
+        if audio_clip:
+            try: audio_clip.close()
+            except: pass
+        if final_clip:
+            try: final_clip.close()
+            except: pass
         for clip in subclips + overlay_clips + raw_bg_clips:
             try: clip.close()
             except: pass
@@ -307,41 +457,8 @@ def render_moviepy_reel_silent(bg_video_paths, overlay_paths, duration_per_frame
         except: pass
 
 # ========================================================
-# MÚSICA EN TENDÈNCIA I PUBLICACIÓ VIA ZERNIO
+# PUBLICACIÓ VIA ZERNIO (TIKTOK SO ORIGINAL + IG TENDÈNCIA)
 # ========================================================
-
-def get_instagram_trending_audio_id(account_id):
-    """Cerca cançó en tendència al catàleg d'Instagram."""
-    try:
-        url = f"https://zernio.com/api/v1/accounts/{account_id}/instagram/audio"
-        headers = {"Authorization": f"Bearer {ZERNIO_API_KEY}"}
-        res = requests.get(url, headers=headers, params={"audioType": "music"}, timeout=15)
-        if res.status_code == 200:
-            tracks = res.json().get("audio", [])
-            if tracks:
-                chosen = random.choice(tracks[:8])
-                print(f"🎵 Àudio Instagram: '{chosen.get('title')}' ({chosen.get('audioId')})")
-                return chosen.get("audioId")
-    except Exception as e:
-        print(f"⚠️ Error música Instagram: {e}")
-    return None
-
-def get_tiktok_trending_music_id(account_id):
-    """Cerca cançó en tendència a la Commercial Music Library (CML) de TikTok."""
-    try:
-        url = f"https://zernio.com/api/v1/accounts/{account_id}/tiktok/commercial-music"
-        headers = {"Authorization": f"Bearer {ZERNIO_API_KEY}"}
-        res = requests.get(url, headers=headers, params={"countryCode": "US"}, timeout=15)
-        if res.status_code == 200:
-            tracks = res.json().get("tracks", [])
-            if tracks:
-                chosen = random.choice(tracks[:8])
-                track_id = chosen.get("id") or chosen.get("clip", {}).get("id")
-                print(f"🎵 Àudio TikTok (CML): '{chosen.get('name')}' (ID: {track_id})")
-                return track_id
-    except Exception as e:
-        print(f"⚠️ Error música TikTok: {e}")
-    return None
 
 def post_reel_to_zernio(video_url, title):
     zernio_url = "https://zernio.com/api/v1/posts"
@@ -349,7 +466,7 @@ def post_reel_to_zernio(video_url, title):
 
     clean_title = title.strip()
 
-    # Text TikTok (sense menció a la bio)
+    # Text per a TikTok (sense menció a la bio)
     tiktok_content = (
         f"{clean_title}\n\n"
         "Send this to your person ❤️\n"
@@ -357,7 +474,7 @@ def post_reel_to_zernio(video_url, title):
         "—\n#couples #relationshipgoals #couplesreels #formfriends"
     )
 
-    # Text Instagram (amb crida a comentar LOVE)
+    # Text per a Instagram (amb crida a comentar LOVE)
     instagram_content = (
         f"{clean_title}\n\n"
         "Tag your person in the comments ❤️\n\n"
@@ -366,7 +483,7 @@ def post_reel_to_zernio(video_url, title):
         "—\n#couples #relationshipgoals #couplesreels #formfriends"
     )
 
-    # 1. Configuració de TikTok amb CML i portada a 1.5s
+    # 1. TikTok: Utilitza el so que porta el propi vídeo (Original Sound). Zero errors!
     tiktok_settings = {
         "privacy_level": "PUBLIC_TO_EVERYONE",
         "allow_comment": True,
@@ -376,26 +493,20 @@ def post_reel_to_zernio(video_url, title):
         "content_preview_confirmed": True,
         "express_consent_given": True
     }
-    tiktok_music_id = get_tiktok_trending_music_id(ZERNIO_TIKTOK_ACCOUNT_ID)
-    if tiktok_music_id:
-        tiktok_settings["musicSoundInfo"] = {
-            "musicSoundId": tiktok_music_id,
-            "musicSoundVolume": 85
-        }
-        tiktok_settings["videoOriginalSoundVolume"] = 0
 
-    # 2. Configuració d'Instagram amb catàleg, portada a 1.5s, no feed i comentari fixat
+    # 2. Instagram: Silencia el vídeo (videoVolume: 0) i posa la cançó en tendència (audioVolume: 100)
     instagram_platform_data = {
         "shareToFeed": False,
         "thumbOffset": 1500,
         "firstComment": "Follow us & comment LOVE and we'll send you the direct link! ✨ (Online, 100% free, no sign-up needed)"
     }
+    
     ig_audio_id = get_instagram_trending_audio_id(ZERNIO_INSTAGRAM_ACCOUNT_ID)
     if ig_audio_id:
         instagram_platform_data["audioConfiguration"] = {
             "audioId": ig_audio_id,
-            "audioVolume": 85,
-            "videoVolume": 0
+            "audioVolume": 100,
+            "videoVolume": 0  # 🔇 Silencia Freesound a Instagram i posa només la tendència
         }
 
     media_items = [{"type": "video", "url": video_url}]
@@ -424,14 +535,25 @@ def post_reel_to_zernio(video_url, title):
         "publishNow": True
     }
 
-    print("📤 Enviant Reel a Zernio (TikTok + Instagram simultani)...")
+    print("📤 Enviant Reel a Zernio (TikTok amb So Original + Instagram amb Tendència)...")
     res = requests.post(zernio_url, headers=headers, json=payload, timeout=120)
-    if res.status_code in (200, 201):
-        print("✅ Reel publicat amb èxit a ambdues plataformes!")
-        return True
-    else:
-        print(f"❌ Error en publicar el Reel ({res.status_code}): {res.text}")
-        return False
+
+    print(f"\n==================== RESPOSTA API ZERNIO (HTTP {res.status_code}) ====================")
+    try:
+        data = res.json()
+        print(json.dumps(data, indent=2))
+        platforms = data.get("post", {}).get("platforms", [])
+        for p in platforms:
+            p_name = p.get("platform")
+            p_status = p.get("status")
+            p_err = p.get("errorMessage")
+            if p_err: print(f"⚠️ ALERTA PLATAFORMA [{p_name}]: {p_err}")
+            else: print(f"✅ Plataforma [{p_name}] -> Estat: {p_status}")
+    except Exception:
+        print(res.text)
+    print("========================================================================\n")
+
+    return res.status_code in (200, 201)
 
 # ========================================================
 # GESTIÓ CSV
@@ -511,6 +633,7 @@ def main():
     font_sans = ImageFont.truetype(FONT_SANS_PATH, 28)
 
     overlay_paths, durations, bg_video_paths = [], [], []
+    bg_audio_path = None
     
     try:
         if post_type == 'type1':
@@ -535,8 +658,12 @@ def main():
         num_bg_videos = max(2, int(round(sum(durations) / 4.0)))
         bg_video_paths = download_pexels_videos(num_bg_videos)
         
-        silent_video_path = os.path.join(VIDEOS_DIR, f"{video_id}_v{RUN_TAG}.mp4")
-        render_moviepy_reel_silent(bg_video_paths, overlay_paths, durations, silent_video_path)
+        # 1. Descarreguem àudio de Freesound
+        bg_audio_path = download_freesound_romantic_music()
+
+        # 2. Renderitzem el vídeo amb aquest àudio integrat
+        video_output_path = os.path.join(VIDEOS_DIR, f"{video_id}_v{RUN_TAG}.mp4")
+        render_moviepy_reel_with_audio(bg_video_paths, overlay_paths, durations, video_output_path, bg_audio_path=bg_audio_path)
 
         status_idx = headers.index('Status')
         rows[current_idx][status_idx] = 'Done'
@@ -545,8 +672,13 @@ def main():
         next_type = save_next_video_type(post_type)
         csv_relpath = os.path.relpath(csv_path, BASE_DIR)
         state_relpath = os.path.relpath(STATE_PATH, BASE_DIR)
+        audio_state_relpath = os.path.relpath(USED_AUDIO_PATH, BASE_DIR) if os.path.exists(USED_AUDIO_PATH) else None
 
-        public_url = get_public_video_url(silent_video_path, RUN_TAG)
+        # Guardem canvis a Git (CSV + Estat + Historial d'Àudios)
+        git_paths = [csv_relpath, state_relpath]
+        if audio_state_relpath: git_paths.append(audio_state_relpath)
+
+        public_url = get_public_video_url(video_output_path, RUN_TAG)
 
         if TEST_MODE:
             msg = (
@@ -557,22 +689,24 @@ def main():
                 f"🔗 <b>Enllaç del Vídeo (GitHub):</b>\n{public_url}"
             )
             send_telegram_text(msg)
-            commit_repo_files([csv_relpath, state_relpath], f"chore: {video_id} -> Done (mode prova)")
+            commit_repo_files(git_paths, f"chore: {video_id} -> Done (mode prova)")
         else:
             if not ZERNIO_API_KEY: raise Exception("⚠️ Falta ZERNIO_API_KEY.")
             if post_reel_to_zernio(public_url, caption_title):
                 msg = (
-                    f"🚀 <b>Reel Publicat! (TikTok + Instagram)</b>\n\n"
+                    f"🚀 <b>Reel Publicat!</b>\n\n"
                     f"📌 <b>ID:</b> {video_id} ({post_type})\n"
                     f"🏷️ <b>Tag Cache:</b> {RUN_TAG}\n"
                     f"📖 <b>Títol:</b> {html.escape(caption_title)}\n\n"
-                    f"🔗 <b>Enllaç del Fitxer (GitHub):</b>\n{public_url}"
+                    f"🔗 <b>Fitxer Vídeo (GitHub):</b>\n{public_url}"
                 )
                 send_telegram_text(msg)
-            commit_repo_files([csv_relpath, state_relpath], f"chore: {video_id} -> Done ({post_type})")
+            commit_repo_files(git_paths, f"chore: {video_id} -> Done ({post_type})")
 
     finally:
-        cleanup_temp_files(overlay_paths + bg_video_paths)
+        all_temp = overlay_paths + bg_video_paths
+        if bg_audio_path: all_temp.append(bg_audio_path)
+        cleanup_temp_files(all_temp)
 
 if __name__ == "__main__":
     main()
