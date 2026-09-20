@@ -1,7 +1,7 @@
 name: Generate and Send Reels
 
 on:
-  workflow_dispatch: # Disparat per cron-job.org o manualment des de GitHub
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -22,7 +22,7 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
 
-      - name: 🎬 Instal·lar FFmpeg (per a MoviePy)
+      - name: 🎬 Instal·lar FFmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
@@ -35,6 +35,7 @@ jobs:
       - name: 🚀 Executar Script de Generació de Reels
         env:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          FREESOUND_API_KEY: ${{ secrets.FREESOUND_API_KEY }}
           ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
           ZERNIO_TIKTOK_ACCOUNT_ID: ${{ secrets.ZERNIO_TIKTOK_ACCOUNT_ID }}
           ZERNIO_INSTAGRAM_ACCOUNT_ID: ${{ secrets.ZERNIO_INSTAGRAM_ACCOUNT_ID }}
