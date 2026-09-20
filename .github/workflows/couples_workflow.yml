@@ -1,14 +1,10 @@
 name: Generate and Post Couples Carousels
 
 on:
-  workflow_dispatch: # Permet executar-lo manualment des del botó "Run workflow" de GitHub
-  schedule:
-    - cron: '0 8 * * *'   # S'executa automàticament a les 08:00 UTC
-    - cron: '0 14 * * *'  # S'executa automàticament a les 14:00 UTC
-    - cron: '0 20 * * *'  # S'executa automàticament a les 20:00 UTC
+  workflow_dispatch: # Disparat per cron-job.org o manualment des de GitHub
 
 permissions:
-  contents: write # Permís imprescindible per poder fer commit i guardar el posts.csv i les imatges
+  contents: write
 
 jobs:
   generate-and-post:
@@ -17,6 +13,8 @@ jobs:
     steps:
       - name: 📦 Checkout Repositori
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: 🐍 Configurar Python 3.10
         uses: actions/setup-python@v5
@@ -36,9 +34,6 @@ jobs:
           ZERNIO_INSTAGRAM_ACCOUNT_ID: ${{ secrets.ZERNIO_INSTAGRAM_ACCOUNT_ID }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          FTP_HOST: ${{ secrets.FTP_HOST }}
-          FTP_USER: ${{ secrets.FTP_USER }}
-          FTP_PASS: ${{ secrets.FTP_PASS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python generate_and_send_couples.py
