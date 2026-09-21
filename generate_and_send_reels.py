@@ -20,7 +20,7 @@ except ImportError:
 # ========================================================
 # CONFIGURACIÓ I PARÀMETRES
 # ========================================================
-TEST_MODE = True
+TEST_MODE = False
 FORCE_TYPE = os.getenv("FORCE_TYPE", None)  
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
