@@ -55,9 +55,11 @@ ZERNIO_INSTAGRAM_ACCOUNT_ID = os.getenv("ZERNIO_INSTAGRAM_ACCOUNT_ID")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# 📏 Dimensions cinematogràfiques amb Safe Area (920x920)
 CANVAS_W, CANVAS_H = 1080, 1920
-SQUARE_SIZE = 1080
-SQUARE_TOP_Y = (CANVAS_H - SQUARE_SIZE) // 2
+SQUARE_SIZE = 920
+SQUARE_LEFT_X = (CANVAS_W - SQUARE_SIZE) // 2  # X = 80 (80px de marge a cada banda)
+SQUARE_TOP_Y = (CANVAS_H - SQUARE_SIZE) // 2   # Y = 500
 
 # ========================================================
 # UTILITATS I HOSTING A GIT
@@ -119,9 +121,7 @@ def send_telegram_text(message):
 # ========================================================
 
 def download_freesound_romantic_music():
-    """Cerca i descarrega una pista suau de piano/romàntica de Freesound per integrar-la al vídeo."""
     if not FREESOUND_API_KEY:
-        print("ℹ️ FREESOUND_API_KEY no configurada. El vídeo es generarà sense àudio base.")
         return None
 
     queries = [
@@ -130,8 +130,6 @@ def download_freesound_romantic_music():
         "soft cinematic romantic piano", "peaceful chill lofi", "warm ambient piano"
     ]
     query = random.choice(queries)
-    print(f"🎵 Cercant música romàntica a Freesound ('{query}')...")
-
     url = "https://freesound.org/apiv2/search/text/"
     params = {
         "query": query,
@@ -173,17 +171,13 @@ def load_used_audio_ids():
 def save_used_audio_id(audio_id):
     used = load_used_audio_ids()
     used.append(audio_id)
-    # Guardem només els últims 25 IDs per no allargar el fitxer infinitament
     used = used[-25:]
     with open(USED_AUDIO_PATH, "w", encoding="utf-8") as f:
         f.write("\n".join(used))
 
 def get_instagram_trending_audio_id(account_id):
-    """Cerca música d'Instagram garantint que NO es repeteixi la mateixa cançó recentment."""
     used_ids = load_used_audio_ids()
     headers = {"Authorization": f"Bearer {ZERNIO_API_KEY}"}
-
-    # Provem primer sense 'q' (tendències pures) i com a fallback amb paraules clau romàntiques
     queries = ["", "love", "romantic", "piano", "acoustic", "sunset"]
     random.shuffle(queries)
 
@@ -196,9 +190,7 @@ def get_instagram_trending_audio_id(account_id):
             res = requests.get(url, headers=headers, params=params, timeout=15)
             if res.status_code == 200:
                 tracks = res.json().get("audio", [])
-                # Filtrem aquelles cançons que no hàgim utilitzat recentment
                 fresh_tracks = [t for t in tracks if t.get("audioId") and t.get("audioId") not in used_ids]
-
                 candidate_tracks = fresh_tracks if fresh_tracks else tracks
                 if candidate_tracks:
                     chosen = random.choice(candidate_tracks[:10])
@@ -212,7 +204,7 @@ def get_instagram_trending_audio_id(account_id):
     return None
 
 # ========================================================
-# PEXELS & OVERLAYS
+# PEXELS & CAPES GRÀFIQUES (AMB FILTRE FOSC I SAFE AREA)
 # ========================================================
 
 def download_pexels_videos(count):
@@ -257,31 +249,57 @@ def wrap_text(text, draw, font, max_width):
     return lines
 
 def draw_text_centered_with_shadow(draw, text, font, y_pos, fill_color='#FFFFFF', shadow_color='#000000'):
+    """Dibuixa text centrat amb ombra reforçada per garantir 100% de llegibilitat."""
     bbox = draw.textbbox((0, 0), text, font=font)
     tw = bbox[2] - bbox[0]
     x = (CANVAS_W - tw) / 2
-    draw.text((x + 2, y_pos + 2), text, fill=shadow_color, font=font)
+    # Ombra multidireccional per a un contrast perfecte
+    for ox, oy in [(-2, 0), (2, 0), (0, -2), (0, 2), (2, 2), (-2, -2)]:
+        draw.text((x + ox, y_pos + oy), text, fill=shadow_color, font=font)
     draw.text((x, y_pos), text, fill=fill_color, font=font)
     return (bbox[3] - bbox[1])
 
+def draw_text_left_with_shadow(draw, text, font, x_pos, y_pos, fill_color='#FFFFFF', shadow_color='#000000'):
+    """Dibuixa text alineat a l'esquerra amb ombra reforçada."""
+    bbox = draw.textbbox((0, 0), text, font=font)
+    for ox, oy in [(-2, 0), (2, 0), (0, -2), (0, 2), (2, 2), (-2, -2)]:
+        draw.text((x_pos + ox, y_pos + oy), text, fill=shadow_color, font=font)
+    draw.text((x_pos, y_pos), text, fill=fill_color, font=font)
+    return (bbox[3] - bbox[1])
+
 def create_base_square_overlay():
+    """
+    Crea la capa RGBA 1080x1920:
+    - 100% Negre opac fora del quadrat de 920x920.
+    - Dins del quadrat arrodonit: filtre fosc semitransparent (~50% d'opacitat)
+      perquè qualsevol vídeo tingui un contrast excel·lent amb el text blanc.
+    """
     frame = Image.new('RGBA', (CANVAS_W, CANVAS_H), (0, 0, 0, 255))
-    blur_r, margin, radius = 10, 28, 60
-    inner_m = margin - blur_r
+    blur_r = 10
+    radius = 50
+
+    sq_left = SQUARE_LEFT_X
+    sq_top = SQUARE_TOP_Y
+    sq_right = SQUARE_LEFT_X + SQUARE_SIZE
+    sq_bottom = SQUARE_TOP_Y + SQUARE_SIZE
+
     mask = Image.new('L', (CANVAS_W, CANVAS_H), 0)
     draw_mask = ImageDraw.Draw(mask)
-    draw_mask.rounded_rectangle([(inner_m, SQUARE_TOP_Y + inner_m), (CANVAS_W - inner_m, SQUARE_TOP_Y + SQUARE_SIZE - inner_m)], radius=radius + blur_r, fill=255)
+    draw_mask.rounded_rectangle([(sq_left, sq_top), (sq_right, sq_bottom)], radius=radius, fill=255)
     mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_r))
-    frame.putalpha(Image.eval(mask, lambda val: int(255 - (val / 255.0) * (255 - 50))))
+
+    # Dins del quadrat (on la màscara és 255): apliquem opacitat de 130 (~51% de negre fosc)
+    alpha_channel = Image.eval(mask, lambda val: int(255 - (val / 255.0) * (255 - 130)))
+    frame.putalpha(alpha_channel)
     return frame
 
 def add_footer_to_overlay(draw_obj, font_sans):
-    draw_text_centered_with_shadow(draw_obj, "coupleforms", font_sans, SQUARE_TOP_Y + 920, fill_color=(255, 255, 255, 230))
+    draw_text_centered_with_shadow(draw_obj, "coupleforms", font_sans, SQUARE_TOP_Y + SQUARE_SIZE - 75, fill_color=(255, 255, 255, 230))
 
 def generate_overlay_type1(data, font_serif, font_sans):
     base = create_base_square_overlay()
     draw = ImageDraw.Draw(base)
-    lines = wrap_text(data.get('Phrase', ''), draw, font_serif, 840)
+    lines = wrap_text(data.get('Phrase', ''), draw, font_serif, max_width=740)
     line_h = [draw.textbbox((0, 0), l, font=font_serif)[3] - draw.textbbox((0, 0), l, font=font_serif)[1] for l in lines]
     y_curr = SQUARE_TOP_Y + (SQUARE_SIZE - (sum(line_h) + (24 * (len(lines) - 1)))) / 2
     for l in lines:
@@ -299,7 +317,7 @@ def generate_overlays_type2(data, font_title, font_q, font_sans):
         base = create_base_square_overlay()
         draw = ImageDraw.Draw(base)
         font = font_title if idx == 0 else font_q
-        lines = wrap_text(text, draw, font, 840)
+        lines = wrap_text(text, draw, font, max_width=740)
         line_h = [draw.textbbox((0, 0), l, font=font)[3] - draw.textbbox((0, 0), l, font=font)[1] for l in lines]
         y_curr = SQUARE_TOP_Y + (SQUARE_SIZE - (sum(line_h) + (20 * (len(lines) - 1)))) / 2
         if idx > 0:
@@ -316,7 +334,7 @@ def generate_overlays_type2(data, font_title, font_q, font_sans):
 def generate_overlay_type3(data, font_title, font_q, font_opt, font_sans):
     base = create_base_square_overlay()
     draw = ImageDraw.Draw(base)
-    q_lines = wrap_text(data.get('Question', ''), draw, font_q, 840)
+    q_lines = wrap_text(data.get('Question', ''), draw, font_q, max_width=740)
     line_h = [draw.textbbox((0, 0), l, font=font_q)[3] - draw.textbbox((0, 0), l, font=font_q)[1] for l in q_lines]
     y_curr = SQUARE_TOP_Y + (SQUARE_SIZE - (sum(line_h) + 150)) / 2
     for l in q_lines:
@@ -335,21 +353,36 @@ def generate_overlay_type4(data, font_serif, font_sans):
     return generate_overlay_type1(data, font_serif, font_sans)
 
 def generate_overlays_type5(data, font_title, font_item, font_sans):
+    """Genera les diapositives de la llista calculant els salts de línia automàtics."""
     title = data.get('Title', '')
-    items = [data.get('Item_1', ''), data.get('Item_2', ''), data.get('Item_3', ''), data.get('Item_4', '')]
+    raw_items = [data.get('Item_1', ''), data.get('Item_2', ''), data.get('Item_3', ''), data.get('Item_4', '')]
     frames = []
+
     for count in range(1, 5):
         base = create_base_square_overlay()
         draw = ImageDraw.Draw(base)
-        y_curr = SQUARE_TOP_Y + 200
-        for tl in wrap_text(title, draw, font_title, 840):
+        y_curr = SQUARE_TOP_Y + 130
+
+        # Títol amb salt de línia
+        t_lines = wrap_text(title, draw, font_title, max_width=720)
+        for tl in t_lines:
             h = draw_text_centered_with_shadow(draw, tl, font_title, y_curr)
-            y_curr += h + 10
-        y_curr += 50
+            y_curr += h + 8
+
+        y_curr += 35
+
+        # Punts de la llista amb càlcul de salt de línia
         for idx in range(count):
-            draw.text((162, y_curr + 2), f"-  {items[idx]}", fill='#000000', font=font_item)
-            draw.text((160, y_curr), f"-  {items[idx]}", fill='#FFFFFF', font=font_item)
-            y_curr += 70
+            item_raw = raw_items[idx].strip()
+            # Si la frase és llarga, es divideix en múltiples línies (màx. 680px)
+            wrapped_lines = wrap_text(f"•  {item_raw}", draw, font_item, max_width=680)
+            
+            for line_idx, line in enumerate(wrapped_lines):
+                x_pos = SQUARE_LEFT_X + 110 if line_idx == 0 else SQUARE_LEFT_X + 140
+                h = draw_text_left_with_shadow(draw, line, font_item, x_pos, y_curr)
+                y_curr += h + 6
+            y_curr += 16  # Espai entre ítems
+
         add_footer_to_overlay(draw, font_sans)
         p = os.path.join(BASE_DIR, f"temp_frame_t5_{count}.png")
         base.save(p)
@@ -357,12 +390,11 @@ def generate_overlays_type5(data, font_title, font_item, font_sans):
     return frames
 
 # ========================================================
-# RENDERITZACIÓ DE VÍDEO (AMB ÀUDIO DE FREESOUND)
+# RENDERITZACIÓ DE VÍDEO (REDUÏT A 920x920 I CENTRAT)
 # ========================================================
 
 def render_moviepy_reel_with_audio(bg_video_paths, overlay_paths, duration_per_frame, output_path, bg_audio_path=None):
-    """Genera el vídeo amb la música de Freesound integrada a l'arxiu."""
-    print("⚙️ Ensamblant vídeo amb MoviePy i pista d'àudio...")
+    print("⚙️ Ensamblant vídeo (920x920 amb Safe Area) i pista d'àudio...")
     total_duration = sum(duration_per_frame)
     num_videos = len(bg_video_paths)
     segment_duration = total_duration / num_videos
@@ -379,13 +411,18 @@ def render_moviepy_reel_with_audio(bg_video_paths, overlay_paths, duration_per_f
             raw_bg_clips.append(c)
             dur = min(segment_duration, c.duration)
             c_sub = c.subclipped(0, dur) if hasattr(c, 'subclipped') else c.subclip(0, dur)
+            
+            # Retall quadrat 920x920
             c_sq = (c_sub.cropped(x_center=c_sub.w/2, y_center=c_sub.h/2, width=SQUARE_SIZE, height=SQUARE_SIZE)
                     if hasattr(c_sub, 'cropped') else
                     c_sub.crop(x_center=c_sub.w/2, y_center=c_sub.h/2, width=SQUARE_SIZE, height=SQUARE_SIZE))
+            
             c_sq = c_sq.resized((SQUARE_SIZE, SQUARE_SIZE)) if hasattr(c_sq, 'resized') else c_sq.resize((SQUARE_SIZE, SQUARE_SIZE))
-            c_sq = (c_sq.with_position((0, SQUARE_TOP_Y)).with_start(start_t)
+            
+            # Posicionat exactament centrat a X=80, Y=500
+            c_sq = (c_sq.with_position((SQUARE_LEFT_X, SQUARE_TOP_Y)).with_start(start_t)
                     if hasattr(c_sq, 'with_position') else
-                    c_sq.set_position((0, SQUARE_TOP_Y)).set_start(start_t))
+                    c_sq.set_position((SQUARE_LEFT_X, SQUARE_TOP_Y)).set_start(start_t))
             try:
                 if hasattr(c_sq, 'fadein') and hasattr(c_sq, 'fadeout'):
                     c_sq = c_sq.fadein(0.3).fadeout(0.3)
@@ -404,7 +441,7 @@ def render_moviepy_reel_with_audio(bg_video_paths, overlay_paths, duration_per_f
 
         final_clip = CompositeVideoClip([bg_black] + subclips + overlay_clips)
 
-        # 🎵 Integració de la música de Freesound al vídeo
+        # 🎵 Integració de la música de Freesound al fitxer MP4
         if bg_audio_path and os.path.exists(bg_audio_path):
             try:
                 audio_clip = AudioFileClip(bg_audio_path)
@@ -416,7 +453,6 @@ def render_moviepy_reel_with_audio(bg_video_paths, overlay_paths, duration_per_f
                 else:
                     audio_clip = audio_clip.subclipped(0, total_duration) if hasattr(audio_clip, 'subclipped') else audio_clip.subclip(0, total_duration)
 
-                # Volum suau al 30% per no tapar
                 if hasattr(audio_clip, 'volumex'):
                     audio_clip = audio_clip.volumex(0.30)
 
@@ -457,7 +493,7 @@ def render_moviepy_reel_with_audio(bg_video_paths, overlay_paths, duration_per_f
         except: pass
 
 # ========================================================
-# PUBLICACIÓ VIA ZERNIO (TIKTOK SO ORIGINAL + IG TENDÈNCIA)
+# PUBLICACIÓ VIA ZERNIO
 # ========================================================
 
 def post_reel_to_zernio(video_url, title):
@@ -466,7 +502,6 @@ def post_reel_to_zernio(video_url, title):
 
     clean_title = title.strip()
 
-    # Text per a TikTok (sense menció a la bio)
     tiktok_content = (
         f"{clean_title}\n\n"
         "Send this to your person ❤️\n"
@@ -474,7 +509,6 @@ def post_reel_to_zernio(video_url, title):
         "—\n#couples #relationshipgoals #couplesreels #formfriends"
     )
 
-    # Text per a Instagram (amb crida a comentar LOVE)
     instagram_content = (
         f"{clean_title}\n\n"
         "Tag your person in the comments ❤️\n\n"
@@ -483,7 +517,7 @@ def post_reel_to_zernio(video_url, title):
         "—\n#couples #relationshipgoals #couplesreels #formfriends"
     )
 
-    # 1. TikTok: Utilitza el so que porta el propi vídeo (Original Sound). Zero errors!
+    # 1. TikTok: So Original integrat a l'arxiu (sense CML ni bloquejos)
     tiktok_settings = {
         "privacy_level": "PUBLIC_TO_EVERYONE",
         "allow_comment": True,
@@ -494,7 +528,7 @@ def post_reel_to_zernio(video_url, title):
         "express_consent_given": True
     }
 
-    # 2. Instagram: Silencia el vídeo (videoVolume: 0) i posa la cançó en tendència (audioVolume: 100)
+    # 2. Instagram: Silenciem el vídeo (videoVolume: 0) i posem la cançó en tendència (audioVolume: 100)
     instagram_platform_data = {
         "shareToFeed": False,
         "thumbOffset": 1500,
@@ -506,7 +540,7 @@ def post_reel_to_zernio(video_url, title):
         instagram_platform_data["audioConfiguration"] = {
             "audioId": ig_audio_id,
             "audioVolume": 100,
-            "videoVolume": 0  # 🔇 Silencia Freesound a Instagram i posa només la tendència
+            "videoVolume": 0
         }
 
     media_items = [{"type": "video", "url": video_url}]
@@ -535,7 +569,7 @@ def post_reel_to_zernio(video_url, title):
         "publishNow": True
     }
 
-    print("📤 Enviant Reel a Zernio (TikTok amb So Original + Instagram amb Tendència)...")
+    print("📤 Enviant Reel a Zernio (TikTok + Instagram)...")
     res = requests.post(zernio_url, headers=headers, json=payload, timeout=120)
 
     print(f"\n==================== RESPOSTA API ZERNIO (HTTP {res.status_code}) ====================")
@@ -627,10 +661,10 @@ def main():
     video_id = data.get('Video_ID', 'Reel_1')
     print(f"🚀 Generant Reel {video_id} ({post_type}) amb Tag: {RUN_TAG}...")
 
-    font_serif = ImageFont.truetype(FONT_SERIF_REG_PATH, 52)
-    font_serif_large = ImageFont.truetype(FONT_SERIF_REG_PATH, 58)
-    font_serif_italic = ImageFont.truetype(FONT_SERIF_ITALIC_PATH, 44)
-    font_sans = ImageFont.truetype(FONT_SANS_PATH, 28)
+    font_serif = ImageFont.truetype(FONT_SERIF_REG_PATH, 50)
+    font_serif_large = ImageFont.truetype(FONT_SERIF_REG_PATH, 54)
+    font_serif_italic = ImageFont.truetype(FONT_SERIF_ITALIC_PATH, 42)
+    font_sans = ImageFont.truetype(FONT_SANS_PATH, 26)
 
     overlay_paths, durations, bg_video_paths = [], [], []
     bg_audio_path = None
@@ -658,10 +692,8 @@ def main():
         num_bg_videos = max(2, int(round(sum(durations) / 4.0)))
         bg_video_paths = download_pexels_videos(num_bg_videos)
         
-        # 1. Descarreguem àudio de Freesound
         bg_audio_path = download_freesound_romantic_music()
 
-        # 2. Renderitzem el vídeo amb aquest àudio integrat
         video_output_path = os.path.join(VIDEOS_DIR, f"{video_id}_v{RUN_TAG}.mp4")
         render_moviepy_reel_with_audio(bg_video_paths, overlay_paths, durations, video_output_path, bg_audio_path=bg_audio_path)
 
@@ -674,7 +706,6 @@ def main():
         state_relpath = os.path.relpath(STATE_PATH, BASE_DIR)
         audio_state_relpath = os.path.relpath(USED_AUDIO_PATH, BASE_DIR) if os.path.exists(USED_AUDIO_PATH) else None
 
-        # Guardem canvis a Git (CSV + Estat + Historial d'Àudios)
         git_paths = [csv_relpath, state_relpath]
         if audio_state_relpath: git_paths.append(audio_state_relpath)
 
